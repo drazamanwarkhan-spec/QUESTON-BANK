@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- Security: only this site's own files may run; the only outside connection allowed is Google's Gemini API. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src https://generativelanguage.googleapis.com; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src https://generativelanguage.googleapis.com; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types default">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>Question Bank &amp; Paper Generator</title>
@@ -58,6 +58,7 @@
       <select id="fType" aria-label="Type">
         <option value="">All types</option><option>Theory</option><option>Numerical</option>
       </select>
+      <select id="fTopic" aria-label="Topic"></select>
       <select id="fDiff" aria-label="Difficulty">
         <option value="">All levels</option><option>Easy</option><option>Medium</option><option>Hard</option>
       </select>
@@ -91,7 +92,8 @@
           <div class="field"><label for="aiBloom">Bloom level</label>
             <select id="aiBloom"><option value="">Any</option><option>Remember</option><option>Understand</option><option>Apply</option><option>Analyze</option><option>Evaluate</option><option>Create</option></select></div>
         </div>
-        <div class="field"><label for="aiTopic">Topic(s)</label><input id="aiTopic" type="text" maxlength="300" placeholder="e.g. NPV and IRR, capital budgeting"></div>
+        <div class="field"><label for="aiTopic">Topic(s)</label><input id="aiTopic" type="text" maxlength="300" placeholder="e.g. NPV and IRR, capital budgeting">
+          <div id="aiTopicChips" class="chips topic-chips"></div><div id="aiTopicInfo" class="topic-info"></div></div>
         <div class="field"><label for="aiNotes">Extra instructions (optional)</label><input id="aiNotes" type="text" maxlength="500" placeholder="e.g. use Pakistani context and PKR figures"></div>
         <div class="field"><label for="aiSource">Course material to base questions on (optional)</label>
           <textarea id="aiSource" rows="4" maxlength="60000" placeholder="Paste lecture notes or a chapter summary…"></textarea></div>
@@ -198,6 +200,7 @@
         <div class="field"><label>&nbsp;</label><span id="rgPool" class="small muted"></span></div>
       </div>
       <div class="field"><label>CLOs to include (none selected = all CLOs)</label><div id="rgClos" class="chips"></div></div>
+      <div class="field"><label>Topics to include (none selected = all topics)</label><div id="rgTopics" class="chips topic-chips"></div></div>
       <label class="check"><input id="rgCover" type="checkbox" checked> Cover every selected CLO at least once</label>
       <label class="check"><input id="rgUnique" type="checkbox" checked> Different questions in each set (no repeats between sets)</label>
       <div class="ai-actions">
@@ -214,7 +217,8 @@
 
   <!-- COURSES -->
   <section id="tab-courses" class="panel hidden">
-    <div class="toolbar"><span class="spacer"></span><button id="addCourse" class="btn primary">+ Add course</button></div>
+    <div class="toolbar"><span class="muted small">Upload each course’s outline to fill in its CLOs and weekly topics automatically.</span><span class="spacer"></span><button id="addCourse" class="btn primary">+ Add course</button></div>
+    <input id="oFile" type="file" class="hidden">
     <div id="courseList" class="course-list"></div>
   </section>
 
@@ -312,7 +316,8 @@
       <div class="field"><label for="qType">Type</label><select id="qType"><option value="">—</option><option>Theory</option><option>Numerical</option></select></div>
       <div class="field"><label for="qDiff">Difficulty</label><select id="qDiff"><option value="">—</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div>
     </div>
-    <div class="field"><label for="qTopic">Topic</label><input id="qTopic" maxlength="200"></div>
+    <div class="field"><label for="qTopic">Topic (pick from the course outline or type your own)</label><input id="qTopic" maxlength="200" list="qTopicList" autocomplete="off"><datalist id="qTopicList"></datalist>
+      <div id="qTopicInfo" class="topic-info"></div></div>
     <div class="field"><label for="qAnswer">Answer key (private, never printed on the paper)</label><textarea id="qAnswer" rows="2" maxlength="20000"></textarea></div>
     <p id="qTotal" class="summary"></p>
     <p id="qErr" class="err"></p>
@@ -353,6 +358,23 @@
     <p id="pwDlgText" class="small"></p>
     <input id="pwDlgInput" type="password" autocomplete="off">
     <div class="dlg-actions"><button value="cancel" class="btn ghost">Cancel</button><button value="ok" class="btn primary">OK</button></div>
+  </form>
+</dialog>
+
+<!-- Course outline -->
+<dialog id="oDlg" class="dlg">
+  <form method="dialog" class="dlg-body">
+    <h2 id="oTitle">Course outline</h2>
+    <p id="oFileInfo" class="small muted"></p>
+    <div class="field"><label for="oText">Outline text (read from your file — you can also paste or edit text here)</label>
+      <textarea id="oText" rows="6" maxlength="150000" placeholder="Paste the course outline here…"></textarea></div>
+    <div class="ai-actions"><button type="button" id="oRead" class="btn primary">Find CLOs &amp; topics</button><span id="oMsg" class="small"></span></div>
+    <div class="grid2 tight">
+      <div><h3>CLOs found</h3><label class="check small"><input id="oReplace" type="checkbox"> Replace descriptions of CLOs the course already has</label><div id="oClos"></div></div>
+      <div><h3>Topics (edit freely — one per line)</h3><textarea id="oTopics" rows="12" placeholder="Week 1: Introduction [CLO 1]&#10;Week 2: …"></textarea>
+        <p class="small muted">Example: Week 3: Topic name [CLO 1, CLO 2]</p></div>
+    </div>
+    <div class="dlg-actions"><button type="button" id="oCancel" class="btn ghost">Cancel</button><button type="button" id="oSave" class="btn primary">Save to course</button></div>
   </form>
 </dialog>
 

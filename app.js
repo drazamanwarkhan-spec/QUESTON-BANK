@@ -1,4 +1,21 @@
-/* Question Bank app — single bundle. Includes JSZip 3.10.2 (MIT license, (c) Stuart Knightley et al.) */
+/* Question Bank app — single bundle. Includes JSZip 3.10.2 (MIT, (c) Stuart Knightley et al.). PDF reading uses pdf.js (Apache-2.0, Mozilla), loaded on demand. */
+/* Trusted Types: the only script URLs this app may load at runtime are its own PDF reader files. */
+(function () {
+  'use strict';
+  if (window.trustedTypes && trustedTypes.createPolicy) {
+    try {
+      trustedTypes.createPolicy('default', {
+        createScriptURL: function (u) {
+          var url = new URL(u, location.href);
+          if (url.origin === location.origin && /\/(?:vendor\/)?pdf(?:\.worker)?\.min\.js$/.test(url.pathname)) return u;
+          throw new TypeError('Blocked script URL');
+        }
+      });
+    } catch (e) { /* policy already exists */ }
+  }
+})();
+
+;
 /*!
 
 JSZip v3.10.2 - A JavaScript class for generating and reading zip files
@@ -63,7 +80,14 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       clos: arr(c.clos, 60).map(function (x) {
         x = x && typeof x === 'object' ? x : {};
         return { id: id(x.id), label: str(x.label, 30).trim() || 'CLO', desc: str(x.desc, 600) };
-      })
+      }),
+      topics: arr(c.topics, 150).map(function (t) {
+        t = t && typeof t === 'object' ? t : {};
+        var w = Math.round(Number(t.week));
+        return { id: id(t.id), week: w >= 1 && w <= 99 ? w : null, title: str(t.title, 200).trim(),
+          clos: arr(t.clos, 20).filter(function (x) { return typeof x === 'string'; }).map(function (x) { return x.slice(0, 64); }) };
+      }).filter(function (t) { return t.title; }),
+      outline: c.outline && typeof c.outline === 'object' ? { fileName: str(c.outline.fileName, 200), uploadedAt: str(c.outline.uploadedAt, 40), text: str(c.outline.text, 150000) } : null
     };
   }
   function cleanQuestion(q) {
@@ -130,7 +154,10 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var c1 = newId(), c2 = newId();
     d.courses.push({ id: 'sample-course', code: 'MS-4711', title: 'Foreign Language', clos: [
       { id: c1, label: 'CLO 1', desc: 'Explain common cognitive heuristics used in decision making.' },
-      { id: c2, label: 'CLO 2', desc: 'Analyse how behavioural biases affect investor decisions.' }] });
+      { id: c2, label: 'CLO 2', desc: 'Analyse how behavioural biases affect investor decisions.' }],
+      topics: [{ week: 1, title: 'Introduction to behavioural finance', clos: [c1] }, { week: 2, title: 'Heuristics', clos: [c1] },
+        { week: 3, title: 'Biases', clos: [c2] }, { week: 4, title: 'Prospect theory', clos: [c2] }] });
+    d.courses[0] = cleanCourse(d.courses[0]);
     d.questions.push(cleanQuestion({ courseId: 'sample-course', title: 'Availability & Anchoring', clos: [c1, c2], topic: 'Heuristics', difficulty: 'Easy', parts: [
       { text: 'Define availability heuristic.', marks: 1 },
       { text: 'Give one example of how recent market news can influence investor decision making.', marks: 1 },
@@ -716,6 +743,287 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
 })();
 
 ;
+/* Course outline reader: gets text out of a .docx / .txt / pasted outline, then finds
+ * CLOs ("CLO 1: …", CLO tables) and weekly topics ("Week 1 – …", week/topic tables). Runs locally. */
+(function () {
+  'use strict';
+
+  function decode(s) {
+    return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+      .replace(/&#(\d+);/g, function (m, n) { return String.fromCodePoint(Number(n)); })
+      .replace(/&#x([0-9a-f]+);/gi, function (m, n) { return String.fromCodePoint(parseInt(n, 16)); }).replace(/&amp;/g, '&');
+  }
+  function paraText(xml) {
+    var out = '';
+    xml.replace(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>|<w:br\/>/g, function (m, t) { out += t != null ? decode(t) : ' '; return m; });
+    return out.replace(/\s+/g, ' ').trim();
+  }
+  function paragraphs(xml) {
+    var res = [];
+    xml.replace(/<w:p[\s>][\s\S]*?<\/w:p>/g, function (p) { var t = paraText(p); if (t) res.push(t); return p; });
+    return res;
+  }
+  // .docx -> plain text; table rows become "cell | cell | cell"
+  async function docxText(buf) {
+    var zip = await JSZip.loadAsync(buf);
+    var f = zip.file('word/document.xml');
+    if (!f) throw new Error('This does not look like a Word .docx file.');
+    var xml = await f.async('string');
+    var body = xml.slice(xml.indexOf('<w:body'));
+    var lines = [], last = 0, re = /<w:tbl>[\s\S]*?<\/w:tbl>/g, m;
+    while ((m = re.exec(body))) {
+      lines = lines.concat(paragraphs(body.slice(last, m.index)));
+      m[0].replace(/<w:tr[\s>][\s\S]*?<\/w:tr>/g, function (tr) {
+        var cells = [];
+        tr.replace(/<w:tc>[\s\S]*?<\/w:tc>/g, function (tc) { cells.push(paragraphs(tc).join(' ')); return tc; });
+        if (cells.some(function (c) { return c; })) lines.push(cells.join(' | '));
+        return tr;
+      });
+      lines.push('');
+      last = m.index + m[0].length;
+    }
+    lines = lines.concat(paragraphs(body.slice(last)));
+    return lines.join('\n');
+  }
+
+  // ---------- PDF (pdf.js, loaded only when needed) ----------
+  var PDF_BASE = document.querySelector('script[src="app.js"]') ? '' : 'vendor/';
+  var PDF_SRI = 'sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e';
+  var pdfLoading = null;
+  function loadPdfJs() {
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if (pdfLoading) return pdfLoading;
+    pdfLoading = new Promise(function (res, rej) {
+      var s = document.createElement('script');
+      if (PDF_SRI.indexOf('sha') === 0) { s.integrity = PDF_SRI; s.crossOrigin = 'anonymous'; }
+      s.onload = function () {
+        if (!window.pdfjsLib) return rej(new Error('PDF reader failed to load.'));
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDF_BASE + 'pdf.worker.min.js';
+        res(window.pdfjsLib);
+      };
+      s.onerror = function () { pdfLoading = null; rej(new Error('PDF reader could not be loaded (pdf.min.js missing on the site?).')); };
+      s.src = PDF_BASE + 'pdf.min.js';
+      document.head.appendChild(s);
+    });
+    return pdfLoading;
+  }
+  async function pdfText(buf) {
+    var lib = await loadPdfJs();
+    var doc = await lib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false, disableFontFace: true, useSystemFonts: false, enableXfa: false }).promise;
+    var out = [];
+    for (var p = 1; p <= Math.min(doc.numPages, 80); p++) {
+      var page = await doc.getPage(p), tc = await page.getTextContent(), rows = [];
+      tc.items.forEach(function (it) {
+        if (!it.str || !it.str.trim() || !it.transform) return;
+        var y = it.transform[5], x = it.transform[4], row = rows.find(function (r) { return Math.abs(r.y - y) < 2.5; });
+        if (!row) { row = { y: y, items: [] }; rows.push(row); }
+        row.items.push({ x: x, w: it.width || 0, s: it.str });
+      });
+      // Each visual line = list of text items sorted left to right.
+      var lines = rows.sort(function (a, b) { return b.y - a.y; }).map(function (r) {
+        return r.items.sort(function (a, b) { return a.x - b.x; });
+      }).filter(function (l) { return l.length; });
+      var join = function (arr) { var s = '', end = null; arr.forEach(function (it) { var gap = end == null ? 0 : it.x - end; s += (end != null && gap > 1 && !/\s$/.test(s) && !/^\s/.test(it.s) ? ' ' : '') + it.s; end = it.x + it.w; }); return s.replace(/\s+/g, ' ').trim(); };
+      var byGap = function (items) { var segs = [], cur = null, end = null; items.forEach(function (it) { if (!cur || it.x - end > 14) { cur = { x: it.x, items: [] }; segs.push(cur); } cur.items.push(it); end = it.x + it.w; }); return segs.map(function (s) { return { x: s.x, s: join(s.items) }; }); };
+      var byCols = function (items, cols) { var cells = cols.map(function () { return []; }); items.forEach(function (it) { var ci = 0; cols.forEach(function (cx, i) { if (cx <= it.x + 8) ci = i; }); cells[ci].push(it); }); return cells.map(join); };
+      // Rebuild tables: column positions come from the row that starts the table; wrapped text is put back in its cell.
+      var cols = null, prev = null, outRows = [];
+      lines.forEach(function (items) {
+        var segs = byGap(items);
+        if (cols && prev) {
+          if (items[0].x > cols[0] + 6) { // continuation of the previous row
+            byCols(items, cols).forEach(function (t, i) { if (t) prev[i] = (prev[i] ? prev[i] + ' ' : '') + t; });
+            return;
+          }
+          var cells = byCols(items, cols);
+          if (cells.filter(Boolean).length >= 2) {
+            if (segs.length > cols.length) { cols = segs.map(function (s) { return s.x; }); cells = segs.map(function (s) { return s.s; }); }
+            prev = cells; outRows.push(prev); return;
+          }
+        }
+        if (segs.length >= 2) { cols = segs.map(function (s) { return s.x; }); prev = segs.map(function (s) { return s.s; }); outRows.push(prev); }
+        else { cols = null; prev = null; outRows.push([segs[0].s]); }
+      });
+      outRows.forEach(function (r) { out.push(r.join(' | ')); });
+      out.push('');
+    }
+    var text = out.join('\n');
+    if (text.replace(/\s/g, '').length < 30) throw new Error('This PDF seems to be a scanned picture with no readable text. Type or paste the CLOs and topics in the boxes instead.');
+    return text;
+  }
+
+  // ---------- other formats ----------
+  async function odtText(zip) {
+    var xml = await zip.file('content.xml').async('string');
+    xml = xml.replace(/<table:table-row[\s\S]*?<\/table:table-row>/g, function (row) {
+      var cells = []; row.replace(/<table:table-cell[\s\S]*?(?:<\/table:table-cell>|\/>)/g, function (c) { cells.push(decode(c.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim()); return c; });
+      return '\n' + cells.join(' | ') + '\n';
+    });
+    return decode(xml.replace(/<text:tab\/>/g, ' ').replace(/<\/text:(?:p|h)>|<text:line-break\/>/g, '\n').replace(/<[^>]+>/g, '')).replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n');
+  }
+  async function pptxText(zip) {
+    var names = Object.keys(zip.files).filter(function (n) { return /^ppt\/slides\/slide\d+\.xml$/.test(n); })
+      .sort(function (a, b) { return Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]); });
+    var out = [];
+    for (var i = 0; i < names.length; i++) {
+      var xml = await zip.file(names[i]).async('string');
+      xml.replace(/<a:p>[\s\S]*?<\/a:p>/g, function (p) { var t = ''; p.replace(/<a:t>([^<]*)<\/a:t>/g, function (m, x) { t += decode(x); return m; }); if (t.trim()) out.push(t.trim()); return p; });
+    }
+    return out.join('\n');
+  }
+  function rtfText(s) {
+    return s.replace(/\\par[d]?\b/g, '\n').replace(/\\cell\b/g, ' | ').replace(/\\row\b/g, '\n').replace(/\\'([0-9a-f]{2})/gi, function (m, h) { return String.fromCharCode(parseInt(h, 16)); })
+      .replace(/\\[a-z]+-?\d* ?/gi, '').replace(/[{}]/g, '').replace(/\n\s*\n+/g, '\n');
+  }
+  // Old binary formats (.doc etc.): pull out runs of readable text.
+  function binaryText(buf) {
+    var u8 = new Uint8Array(buf), pick = function (s) {
+      return (s.match(/[A-Za-z0-9\u00c0-\u024f.,;:()&%'"\/\-\u2013\u2019 \t|\u0007\r]{6,}/g) || []).filter(function (r) { return /[a-z]{3}/i.test(r); });
+    };
+    var a = pick(new TextDecoder('utf-16le').decode(u8)), b = pick(new TextDecoder('windows-1252').decode(u8));
+    var best = a.join('').length > b.join('').length ? a : b;
+    return best.join('\n').replace(/\u0007\u0007/g, '\n').replace(/\u0007/g, ' | ').replace(/\r/g, '\n').replace(/\n\s*\n+/g, '\n');
+  }
+
+  var RE_CLO = /^\s*(?:\d+\.\s*)?CLO\s*[-#.]?\s*(\d{1,2})\s*[:.\-\u2013\u2014)|]?\s*(.+)$/i;
+  var RE_WEEK = /^\s*(?:week|wk|lecture|lec|session|class|module|unit|chapter)\s*[-#.]?\s*(\d{1,2})(?:\s*(?:-|\u2013|&|,|to|and)\s*\d{1,2})?\s*[:.\-\u2013\u2014)|]?\s*(.*)$/i;
+  var RE_HEAD_CLO = /^\s*(?:\d+[.)]?\s*)?(?:(?:course\s+)?learning\s+outcomes?|course\s+outcomes?|clos?|outcomes|learning\s+objectives|course\s+objectives)\b[^.]{0,80}$|students?\s+will\s+be\s+able\s+to\s*:?\s*$|upon\s+(?:successful\s+)?completion\b.*:\s*$/i;
+  var RE_ITEM = /^\s*(?:CLO\s*[-#.]?\s*)?(?:\(?(\d{1,2}|[a-h]|[ivx]{1,4})[.):\-\u2013]|[\u2022\u25cf\u25aa\u2023\u2043\-*\u2013\u25e6\uf0b7\uf0a7])\s*(.{8,})$/i;
+  var RE_VERB = /^(?:understand|explain|describe|identify|define|apply|analy[sz]e|evaluate|create|design|demonstrate|discuss|compare|calculate|interpret|develop|assess|examine|recogni[sz]e|use|outline|summari[sz]e|formulate|critically|construct|solve|prepare|communicate|differentiate|distinguish|illustrate|appraise|justify|integrate|comprehend|know|learn|be able)\b/i;
+  var RE_HEAD_TOPICS = /^\s*(?:course\s+(?:contents?|outline|topics|plan|schedule)|topics?(?:\s+covered)?|syllabus|lecture\s+plan|weekly\s+(?:plan|schedule|breakdown)|tentative\s+schedule)\s*:?\s*$/i;
+  var RE_HEAD_STOP = /^\s*(?:assessment|grading|evaluation|marks\s+distribution|text\s*books?|reference|recommended|readings?|policy|policies|attendance|plagiarism|instructor|office hours|teaching methodology|course\s+learning\s+outcomes?|clos?)\b.*$/i;
+
+  function nums(s) { return (String(s).match(/\d{1,2}/g) || []).map(Number); }
+  function cloNumsIn(s) {
+    var out = [];
+    String(s).replace(/CLO\s*[-#.]?\s*(\d{1,2}(?:\s*(?:,|&|and|\/)\s*\d{1,2})*)/gi, function (m, g) { out = out.concat(nums(g)); return m; });
+    return out;
+  }
+  function clean(s) { return String(s || '').replace(/\s+/g, ' ').replace(/^[\s:\-\u2013|.]+|[\s:\-\u2013|]+$/g, '').trim(); }
+
+  function extract(text) {
+    var lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+    var clos = {}, topics = [], table = null, inTopics = false, inClos = false, cloSeq = 0, lastClo = null;
+    function addClo(n, d) { d = clean(d); if (n && d && d.length > 5 && (!clos[n] || clos[n].length < d.length)) clos[n] = d.slice(0, 600); }
+    function addTopic(w, t, cl) {
+      t = clean(t.replace(/CLO\s*[-#.]?\s*\d{1,2}(?:\s*(?:,|&|and|\/)\s*\d{1,2})*/gi, '').replace(/\(\s*\)|\[\s*\]/g, ''));
+      if (!t || t.length < 3 || /^(topics?|contents?|week|lecture|description)$/i.test(t)) return;
+      topics.push({ week: w || null, title: t.slice(0, 200), cloNums: Array.from(new Set(cl || [])) });
+    }
+    lines.forEach(function (raw) {
+      var line = raw.trim();
+      if (!line) { table = null; return; }
+      // ---- section: course learning outcomes (any layout) ----
+      if (RE_HEAD_CLO.test(line) && !RE_CLO.test(line) && line.length < 120) { inClos = true; inTopics = false; lastClo = null; return; }
+      if (inClos) {
+        var mm;
+        if (RE_CLO.test(line.split('|')[0])) { /* handled below */ }
+        else if (line.indexOf('|') >= 0) {
+          var cs = line.split('|').map(function (c) { return c.trim(); });
+          var nn = nums(cs[0])[0], longest = cs.slice().sort(function (a, b) { return b.length - a.length; })[0];
+          if (nn && longest.length > 15) { addClo(nn, longest); lastClo = nn; cloSeq = Math.max(cloSeq, nn); return; }
+          if (!/\d/.test(line) && /desc|outcome|statement|clo/i.test(line)) return; // header row
+          if (longest.length > 15 && RE_VERB.test(longest)) { cloSeq++; addClo(cloSeq, longest); lastClo = cloSeq; return; }
+        } else if ((mm = RE_ITEM.exec(line))) {
+          var n2 = /^\d+$/.test(mm[1] || '') ? Number(mm[1]) : cloSeq + 1;
+          cloSeq = Math.max(cloSeq, n2); addClo(n2, mm[2]); lastClo = n2; return;
+        } else if (RE_VERB.test(line) && line.length > 15) { cloSeq++; addClo(cloSeq, line); lastClo = cloSeq; return; }
+        else if (lastClo && /^[a-z(]/.test(line) && clos[lastClo] && !/[.;]$/.test(clos[lastClo])) { clos[lastClo] = (clos[lastClo] + ' ' + line).slice(0, 600); return; }
+        else if (line.length < 80 && !/[.;,]$/.test(line)) { inClos = false; } // next heading
+      }
+      if (line.indexOf('|') >= 0) {
+        var cells = line.split('|').map(function (c) { return c.trim(); }), low = cells.map(function (c) { return c.toLowerCase(); });
+        // table header?
+        var wi = low.findIndex(function (c) { return /^(week|wk|lecture|lec|session|class|s\.?\s*no|sr\.?\s*no|#)\b/.test(c); });
+        var ti = low.findIndex(function (c) { return /topic|content|subject|description|lecture title|title/.test(c); });
+        var ci = low.findIndex(function (c) { return /\bclos?\b|learning outcome/.test(c); });
+        if (wi >= 0 && (ti >= 0 || cells.length >= 2) && !/\d/.test(cells[wi])) { table = { kind: 'week', wi: wi, ti: ti >= 0 && ti !== wi ? ti : (wi + 1), ci: ci }; return; }
+        if (ci >= 0 && ti < 0 && /description|statement|outcome/.test(low.join(' ')) && !/\d/.test(cells[ci])) {
+          table = { kind: 'clo', ci: ci, di: low.findIndex(function (c, i) { return i !== ci && /description|statement|outcome/.test(c); }) }; return;
+        }
+        if (ci >= 0 && low.some(function (c) { return /description|statement/.test(c); }) && !/\d/.test(line)) {
+          table = { kind: 'clo', ci: ci, di: low.findIndex(function (c, i) { return i !== ci && /description|statement|outcome/.test(c); }) }; return;
+        }
+        // row with "CLO n" in a cell
+        var cc = cells.findIndex(function (c) { return /^CLO\s*[-#.]?\s*\d{1,2}\s*[:.\-\u2013]?$/i.test(c); });
+        if (cc >= 0 && (!table || table.kind !== 'week')) {
+          var longest = cells.filter(function (c, i) { return i !== cc; }).sort(function (a, b) { return b.length - a.length; })[0];
+          addClo(nums(cells[cc])[0], longest); return;
+        }
+        if (cells[0] && RE_CLO.test(cells[0])) { var m0 = RE_CLO.exec(cells[0]); addClo(Number(m0[1]), m0[2]); return; }
+        if (table && table.kind === 'clo') {
+          var n = nums(cells[table.ci] || cells[0])[0], d = table.di >= 0 ? cells[table.di] : cells.slice().sort(function (a, b) { return b.length - a.length; })[0];
+          if (n) addClo(n, d); return;
+        }
+        if (table && table.kind === 'week') {
+          var w = nums(cells[table.wi])[0] || null, t = cells[table.ti] || '';
+          if (!t || t.length < 3) t = cells.filter(function (c, i) { return i !== table.wi && i !== table.ci; }).sort(function (a, b) { return b.length - a.length; })[0] || '';
+          addTopic(w, t, (table.ci >= 0 ? nums(cells[table.ci]) : []).concat(cloNumsIn(line))); return;
+        }
+        var wm = RE_WEEK.exec(cells[0]);
+        if (wm) { addTopic(Number(wm[1]), wm[2] || cells.slice(1).sort(function (a, b) { return b.length - a.length; })[0] || '', cloNumsIn(line)); return; }
+        return;
+      }
+      var m;
+      if ((m = RE_CLO.exec(line))) { addClo(Number(m[1]), m[2]); return; }
+      if ((m = RE_WEEK.exec(line)) && m[2]) { addTopic(Number(m[1]), m[2], cloNumsIn(line)); inTopics = true; return; }
+      if (RE_HEAD_TOPICS.test(line)) { inTopics = true; return; }
+      if (RE_HEAD_STOP.test(line) && line.length < 60) { inTopics = false; return; }
+      if (inTopics && line.length <= 160 && !/^(page|\d+)$/i.test(line)) addTopic(null, line.replace(/^[\-\u2022\u25cf*\d.)\s]+/, ''), cloNumsIn(line));
+    });
+    // merge duplicate weeks (e.g. two lecture rows in the same week)
+    var merged = [], byKey = {};
+    topics.forEach(function (t) {
+      var k = t.title.toLowerCase();
+      if (byKey[k]) { byKey[k].cloNums = Array.from(new Set(byKey[k].cloNums.concat(t.cloNums))); return; }
+      byKey[k] = t; merged.push(t);
+    });
+    return {
+      clos: Object.keys(clos).map(Number).sort(function (a, b) { return a - b; }).map(function (n) { return { num: n, desc: clos[n] }; }),
+      topics: merged.slice(0, 120)
+    };
+  }
+
+  async function readFile(file) {
+    if (file.size > 40 * 1024 * 1024) throw new Error('File is too large (max 40 MB).');
+    var buf = await file.arrayBuffer(), u8 = new Uint8Array(buf.slice(0, 8)), head = String.fromCharCode.apply(null, u8);
+    if (head.indexOf('%PDF') === 0) return pdfText(buf);
+    if (head.indexOf('PK') === 0) {
+      var zip = await JSZip.loadAsync(buf);
+      if (zip.file('word/document.xml')) return docxText(buf);
+      if (zip.file('content.xml')) return odtText(zip);
+      if (Object.keys(zip.files).some(function (n) { return /^ppt\/slides\//.test(n); })) return pptxText(zip);
+      throw new Error('Could not find any text in this file.');
+    }
+    if (u8[0] === 0xD0 && u8[1] === 0xCF) return binaryText(buf);
+    var txt = new TextDecoder('utf-8').decode(buf);
+    if (/^\{\\rtf/.test(txt)) return rtfText(txt);
+    if (/<html|<body|<p[\s>]/i.test(txt.slice(0, 2000))) return txt.replace(/<(script|style)[\s\S]*?<\/\1>/gi, '').replace(/<\/(?:p|div|li|h\d|tr)>|<br\s*\/?>/gi, '\n').replace(/<\/t[dh]>/gi, ' | ').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+    if ((txt.match(/\uFFFD/g) || []).length > txt.length / 20) return binaryText(buf);
+    return /\.csv$/i.test(file.name) ? txt.replace(/,/g, ' | ') : txt;
+  }
+
+  // "Week 3: Topic [CLO 1, CLO 2]" lines <-> topic objects
+  function topicsToText(topics, cloLabel) {
+    return topics.map(function (t) {
+      var c = (t.cloLabels || []).join(', ');
+      return (t.week ? 'Week ' + t.week + ': ' : '') + t.title + (c ? ' [' + c + ']' : '');
+    }).join('\n');
+  }
+  function textToTopics(text) {
+    return String(text || '').split('\n').map(function (l) {
+      l = l.trim(); if (!l) return null;
+      var cl = [], m = /\[([^\]]*)\]\s*$/.exec(l);
+      if (m) { cl = cloNumsIn(m[1]).concat(/clo/i.test(m[1]) ? [] : nums(m[1])); l = l.slice(0, m.index).trim(); }
+      var w = /^(?:week|wk)\s*(\d{1,2})\s*[:.\-\u2013]\s*(.*)$/i.exec(l);
+      return { week: w ? Number(w[1]) : null, title: clean(w ? w[2] : l).slice(0, 200), cloNums: cl };
+    }).filter(function (t) { return t && t.title; });
+  }
+
+  window.QBOutline = { readFile: readFile, extract: extract, topicsToText: topicsToText, textToTopics: textToTopics };
+})();
+
+;
 /* UI. All user / imported / AI text is inserted with textContent only (no innerHTML anywhere). */
 (function () {
   'use strict';
@@ -760,6 +1068,23 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
   function total(q) { return D.questionTotal(q); }
   function round(n) { return Math.round(n * 100) / 100; }
+  // ----- course outline topics -----
+  function norm(t) { return String(t || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+  function topicOf(c, title) { var k = norm(title); return k && c && c.topics ? c.topics.find(function (t) { return norm(t.title) === k; }) : null; }
+  function topicClos(c, t) { return c.clos.filter(function (x) { return t.clos.indexOf(x.id) >= 0; }).map(function (x) { return x.label; }); }
+  function topicShort(t) { return (t.week ? 'W' + t.week + ' \u00b7 ' : '') + (t.title.length > 42 ? t.title.slice(0, 40) + '\u2026' : t.title); }
+  function topicLong(c, t) { var cl = topicClos(c, t); return (t.week ? 'Week ' + t.week + ' \u2014 ' : '') + t.title + (cl.length ? '  \u00b7  ' + cl.join(', ') : ''); }
+  function topicInfo(el, c, title) {
+    clear(el); el.className = 'topic-info';
+    if (!c || !title || !title.trim()) { if (c && c.topics && c.topics.length) el.textContent = c.topics.length + ' topics available from the course outline \u2014 start typing or pick from the list.'; return; }
+    var parts = title.split(/\s*,\s*/).filter(Boolean), found = parts.map(function (p) { return topicOf(c, p); }).filter(Boolean);
+    if (!found.length) { if (c.topics && c.topics.length) el.textContent = 'Not in the course outline (custom topic).'; return; }
+    el.className = 'topic-info match';
+    found.forEach(function (t, i) {
+      var nq = data.questions.filter(function (q) { return q.courseId === c.id && norm(q.topic) === norm(t.title); }).length;
+      el.append(h('div', null, '\ud83d\udcd8 ', h('b', { text: topicLong(c, t) }), h('span', { text: '  \u00b7  ' + nq + ' question' + (nq === 1 ? '' : 's') + ' in the bank' })));
+    });
+  }
 
   // ---------- persistence ----------
   var saveTimer = null;
@@ -828,7 +1153,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
 
   // ---------- QUESTION BANK ----------
-  var filt = { course: '', clo: '', type: '', diff: '', q: '' };
+  var filt = { course: '', clo: '', type: '', diff: '', q: '', topic: '' };
   function renderBank() {
     fillCourseSelect($('fCourse'), filt.course, 'All courses');
     var fc = $('fClo'); clear(fc).append(opt('', 'All CLOs'));
@@ -836,6 +1161,10 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     if (c) c.clos.forEach(function (x) { fc.append(opt(x.id, x.label, x.id === filt.clo)); });
     else filt.clo = '';
     fc.disabled = !c;
+    var ft = clear($('fTopic')); ft.append(opt('', 'All topics'));
+    if (c && c.topics.length) c.topics.forEach(function (t) { ft.append(opt(norm(t.title), topicShort(t), norm(t.title) === filt.topic)); });
+    else filt.topic = '';
+    ft.disabled = !(c && c.topics.length); ft.title = 'Topics come from the course outline';
     var list = filteredQuestions();
     $('bankCount').textContent = list.length + ' of ' + data.questions.length + ' questions';
     var box = clear($('qList'));
@@ -850,6 +1179,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       if (filt.clo && q.clos.indexOf(filt.clo) < 0) return false;
       if (filt.type && q.qtype !== filt.type) return false;
       if (filt.diff && q.difficulty !== filt.diff) return false;
+      if (filt.topic && norm(q.topic) !== filt.topic) return false;
       if (s) {
         var hay = [q.title, q.stem, q.topic, q.answer].concat(q.parts.map(function (p) { return p.text; })).join(' ').toLowerCase();
         if (hay.indexOf(s) < 0) return false;
@@ -874,7 +1204,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       q.clos.length ? null : h('span', { class: 'badge warn', text: 'No CLO' }),
       q.qtype ? h('span', { class: 'badge', text: q.qtype }) : null,
       q.difficulty ? h('span', { class: 'badge diff-' + q.difficulty.toLowerCase(), text: q.difficulty }) : null,
-      q.topic ? h('span', { class: 'badge topic', text: q.topic }) : null,
+      q.topic ? (function () { var c = course(q.courseId), t = topicOf(c, q.topic); return h('span', { class: 'badge topic', title: t ? topicLong(c, t) : 'Topic', text: (t && t.week ? 'W' + t.week + ' \u00b7 ' : '') + q.topic }); })() : null,
       q.answer ? h('span', { class: 'badge', text: 'Answer key' }) : null);
   }
   function questionCard(q) {
@@ -924,8 +1254,19 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     draftParts = src.parts.map(function (p) { return { id: p.id, text: p.text, marks: p.marks }; });
     if (!q && !draftParts.length) draftParts = [{ text: '', marks: 1 }];
     draftClos = src.clos.slice();
+    fillTopicList();
     $('qErr').textContent = ''; $('qNewClo').value = '';
     renderQClos(); renderQParts(); $('qDlg').showModal(); $('qTitle').focus();
+  }
+  function fillTopicList() {
+    var c = course($('qCourse').value), dl = clear($('qTopicList'));
+    (c ? c.topics : []).forEach(function (t) { dl.append(h('option', { value: t.title, label: topicLong(c, t) })); });
+    topicInfo($('qTopicInfo'), c, $('qTopic').value);
+  }
+  function onQTopic() {
+    var c = course($('qCourse').value), t = topicOf(c, $('qTopic').value);
+    if (t && !draftClos.length && t.clos.length) { draftClos = t.clos.slice(); renderQClos(); }
+    topicInfo($('qTopicInfo'), c, $('qTopic').value);
   }
   function renderQClos() {
     var c = course($('qCourse').value), box = clear($('qClos'));
@@ -988,8 +1329,12 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
           var cnt = data.questions.filter(function (q) { return q.clos.indexOf(x.id) >= 0; }).length;
           return h('li', null, h('b', { text: x.label }), ' ', x.desc || '', h('span', { class: 'muted small', text: '  · ' + cnt + ' q' }));
         })) : h('p', { class: 'muted small', text: 'No CLOs defined.' }),
+        outlineBox(c),
         h('div', { class: 'qactions' },
           h('button', { class: 'btn small', text: 'Edit course & CLOs', onclick: function () { openCourse(c); } }),
+          h('button', { class: 'btn small', text: c.outline ? 'Replace outline' : '\u2b06 Upload outline', onclick: function () { outlineTarget = c; $('oFile').value = ''; $('oFile').click(); } }),
+          h('button', { class: 'btn small ghost', text: 'Paste outline text', onclick: function () { openOutline(c, '', ''); } }),
+          c.topics.length ? h('button', { class: 'btn small ghost', text: 'Edit topics', onclick: function () { openOutline(c, null, null); } }) : null,
           h('button', { class: 'btn small ghost', text: 'View questions', onclick: function () { filt.course = c.id; filt.clo = ''; showTab('bank'); } }),
           h('button', { class: 'btn small ghost danger-t', text: 'Delete', onclick: function () {
             if (!confirm('Delete course ' + c.code + (n ? ' and its ' + n + ' question(s)' : '') + '? This cannot be undone.')) return;
@@ -1000,6 +1345,85 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
           } }))));
     });
   }
+  function outlineBox(c) {
+    if (!c.outline && !c.topics.length) return h('p', { class: 'muted small', text: 'No course outline uploaded yet.' });
+    var cnt = function (t) { return data.questions.filter(function (q) { return q.courseId === c.id && norm(q.topic) === norm(t.title); }).length; };
+    return h('div', { class: 'outline-box' },
+      c.outline ? h('p', { class: 'small' }, '\ud83d\udcc4 ', h('b', { text: c.outline.fileName || 'Pasted outline' }), h('span', { class: 'muted', text: c.outline.uploadedAt ? '  \u00b7  added ' + new Date(c.outline.uploadedAt).toLocaleDateString() : '' })) : null,
+      h('details', { open: c.topics.length <= 16 ? true : null }, h('summary', { text: 'Topics from the outline (' + c.topics.length + ')' }),
+        h('ul', { class: 'topic-list' }, c.topics.map(function (t) {
+          var n = cnt(t);
+          return h('li', null, h('span', { class: 'wk', text: t.week ? 'Week ' + t.week : '\u2022' }), h('span', { text: t.title }),
+            topicClos(c, t).map(function (l) { return h('span', { class: 'badge clo', text: l }); }),
+            h('span', { class: 'badge ' + (n ? '' : 'warn'), text: n + ' q' }),
+            h('button', { class: 'link small', text: 'questions', onclick: function () { filt.course = c.id; filt.topic = norm(t.title); filt.clo = ''; showTab('bank'); } }));
+        }))),
+      c.outline && c.outline.text ? h('details', null, h('summary', { text: 'View outline text' }), h('div', { class: 'outline-text', text: c.outline.text })) : null);
+  }
+
+  // ---------- course outline dialog ----------
+  var outlineTarget = null, outlineFile = '', outlineFound = [];
+  async function outlineFromFile(file) {
+    var c = outlineTarget; if (!file || !c) return;
+    try { openOutline(c, await window.QBOutline.readFile(file), file.name); }
+    catch (e) { toast(e.message, 'err'); openOutline(c, '', file.name); }
+  }
+  function openOutline(c, text, fileName) {
+    outlineTarget = c; outlineFound = [];
+    $('oTitle').textContent = 'Course outline \u2014 ' + c.code + ' ' + c.title;
+    $('oMsg').textContent = ''; clear($('oClos')); $('oReplace').checked = false;
+    if (text === null) { // edit existing topics
+      outlineFile = c.outline ? c.outline.fileName : '';
+      $('oText').value = c.outline ? c.outline.text : '';
+      $('oTopics').value = window.QBOutline.topicsToText(c.topics.map(function (t) { return { week: t.week, title: t.title, cloLabels: topicClos(c, t) }; }));
+      $('oFileInfo').textContent = 'Edit the topic list below, or click \u201cFind CLOs & topics\u201d to read the outline text again.';
+    } else {
+      outlineFile = fileName || '';
+      $('oText').value = text; $('oTopics').value = '';
+      $('oFileInfo').textContent = fileName ? 'Read from: ' + fileName : 'Paste the course outline text below, then click \u201cFind CLOs & topics\u201d.';
+      if (text) readOutline();
+    }
+    $('oDlg').showModal();
+  }
+  function readOutline() {
+    var c = outlineTarget, r = window.QBOutline.extract($('oText').value), box = clear($('oClos'));
+    outlineFound = r.clos.map(function (x) {
+      var lab = 'CLO ' + x.num, ex = c.clos.find(function (y) { return norm(y.label).replace(/\s/g, '') === lab.toLowerCase().replace(' ', ''); });
+      return { label: lab, desc: x.desc, existing: ex, on: !ex || !ex.desc };
+    });
+    if (!outlineFound.length) box.append(h('p', { class: 'small muted', text: 'No CLOs found in this text. You can still add them in \u201cEdit course & CLOs\u201d.' }));
+    outlineFound.forEach(function (f) {
+      var cb = h('input', { type: 'checkbox', checked: f.on, onchange: function () { f.on = cb.checked; } });
+      var ta = h('textarea', { rows: 2, maxlength: 600, value: f.desc, oninput: function () { f.desc = ta.value; } });
+      box.append(h('div', { class: 'oclo-row' }, cb, h('b', { text: f.label }), ta,
+        h('span', { class: 'st', text: f.existing ? (f.existing.desc ? 'Already in course: \u201c' + f.existing.desc.slice(0, 80) + '\u201d' : 'Already in course (no description yet)') : 'New CLO' })));
+    });
+    $('oTopics').value = window.QBOutline.topicsToText(r.topics.map(function (t) { return { week: t.week, title: t.title, cloLabels: t.cloNums.map(function (n) { return 'CLO ' + n; }) }; }));
+    var msg = $('oMsg'); msg.className = 'small ' + (r.clos.length || r.topics.length ? 'ok' : 'err');
+    msg.textContent = r.clos.length || r.topics.length ? 'Found ' + r.clos.length + ' CLO(s) and ' + r.topics.length + ' topic(s). Check and edit them, then click Save to course.'
+      : 'Nothing found automatically. Type the topics yourself (one per line), e.g. \u201cWeek 1: Introduction [CLO 1]\u201d.';
+  }
+  function saveOutline() {
+    var c = outlineTarget; if (!c) return;
+    var findClo = function (lab) { var k = lab.toLowerCase().replace(/\s/g, ''); return c.clos.find(function (y) { return norm(y.label).replace(/\s/g, '') === k; }); };
+    outlineFound.forEach(function (f) {
+      if (!f.on || !f.desc.trim()) return;
+      var ex = findClo(f.label);
+      if (ex) { if (!ex.desc || $('oReplace').checked) ex.desc = f.desc.trim().slice(0, 600); }
+      else c.clos.push({ id: S.newId(), label: f.label, desc: f.desc.trim().slice(0, 600) });
+    });
+    c.topics = window.QBOutline.textToTopics($('oTopics').value).slice(0, 150).map(function (t) {
+      return { id: S.newId(), week: t.week, title: t.title, clos: t.cloNums.map(function (n) {
+        var x = findClo('CLO ' + n); if (!x) { x = { id: S.newId(), label: 'CLO ' + n, desc: '' }; c.clos.push(x); } return x.id;
+      }) };
+    });
+    c.clos.sort(function (a, b) { return a.label.localeCompare(b.label, undefined, { numeric: true }); });
+    if ($('oText').value.trim()) c.outline = { fileName: outlineFile || (c.outline && c.outline.fileName) || '', uploadedAt: new Date().toISOString(), text: $('oText').value.slice(0, 150000) };
+    var cleaned = S.cleanCourse(c); data.courses[data.courses.indexOf(c)] = cleaned;
+    $('oDlg').close(); changed(); render();
+    toast('Outline saved: ' + cleaned.clos.length + ' CLO(s), ' + cleaned.topics.length + ' topic(s). Press Save to back up.');
+  }
+
   function openCourse(c) {
     editingCourse = c || null;
     $('cDlgTitle').textContent = c ? 'Edit course' : 'New course';
@@ -1025,7 +1449,9 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     if (!code || !title) { $('cErr').textContent = 'Course code and title are required.'; return; }
     if (data.courses.some(function (c) { return c !== editingCourse && c.code.toLowerCase() === code.toLowerCase(); })) { $('cErr').textContent = 'A course with this code already exists.'; return; }
     var clos = draftCClos.filter(function (x) { return x.label.trim(); });
-    var c = S.cleanCourse({ id: editingCourse ? editingCourse.id : '', code: code, title: title, clos: clos });
+    var c = S.cleanCourse({ id: editingCourse ? editingCourse.id : '', code: code, title: title, clos: clos,
+      topics: editingCourse ? editingCourse.topics.map(function (t) { return Object.assign({}, t, { clos: t.clos.filter(function (id) { return clos.some(function (x) { return x.id === id; }); }) }); }) : [],
+      outline: editingCourse ? editingCourse.outline : null });
     if (editingCourse) {
       var keep = {}; c.clos.forEach(function (x) { keep[x.id] = 1; });
       data.questions.forEach(function (q) { if (q.courseId === c.id) q.clos = q.clos.filter(function (id) { return keep[id]; }); });
@@ -1177,7 +1603,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
 
   // ---------- RANDOM PAPER GENERATOR ----------
-  var rgSel = { clos: [], course: '' };
+  var rgSel = { clos: [], course: '', topics: [] };
   function rnd(n) { var a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; }
   function shuffle(arr) { var a = arr.slice(); for (var i = a.length - 1; i > 0; i--) { var j = rnd(i + 1), t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
   function rgPool() {
@@ -1187,12 +1613,22 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       if (ty && q.qtype !== ty) return false;
       if (df && q.difficulty !== df) return false;
       if (rgSel.clos.length && !q.clos.some(function (id) { return rgSel.clos.indexOf(id) >= 0; })) return false;
+      if (rgSel.topics.length && rgSel.topics.indexOf(norm(q.topic)) < 0) return false;
       return true;
     });
   }
   function renderRG() {
     var c = course(data.paper.courseId), box = clear($('rgClos'));
-    if (rgSel.course !== data.paper.courseId) { rgSel.course = data.paper.courseId; rgSel.clos = []; }
+    if (rgSel.course !== data.paper.courseId) { rgSel.course = data.paper.courseId; rgSel.clos = []; rgSel.topics = []; }
+    var tb = clear($('rgTopics'));
+    if (!c || !c.topics.length) tb.append(h('span', { class: 'muted small', text: 'Upload the course outline (Courses & CLOs) to choose by topic.' }));
+    (c ? c.topics : []).forEach(function (t) {
+      var k = norm(t.title), on = rgSel.topics.indexOf(k) >= 0;
+      var nq = data.questions.filter(function (q) { return q.courseId === c.id && norm(q.topic) === k; }).length;
+      tb.append(h('button', { type: 'button', class: 'chip' + (on ? ' on' : ''), title: topicLong(c, t) + ' \u00b7 ' + nq + ' question(s)', text: topicShort(t) + ' (' + nq + ')', onclick: function () {
+        if (on) rgSel.topics = rgSel.topics.filter(function (y) { return y !== k; }); else rgSel.topics.push(k); renderRG();
+      } }));
+    });
     (c ? c.clos : []).forEach(function (x) {
       var on = rgSel.clos.indexOf(x.id) >= 0;
       box.append(h('button', { type: 'button', class: 'chip' + (on ? ' on' : ''), title: x.desc, text: x.label, onclick: function () {
@@ -1363,6 +1799,17 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         if (on) aiSel.clos = aiSel.clos.filter(function (y) { return y !== x.id; }); else aiSel.clos.push(x.id); renderAI();
       } }));
     });
+    var tc = clear($('aiTopicChips')), cur = $('aiTopic').value.split(/\s*,\s*/).map(norm);
+    (c ? c.topics : []).forEach(function (t) {
+      var on = cur.indexOf(norm(t.title)) >= 0;
+      tc.append(h('button', { type: 'button', class: 'chip' + (on ? ' on' : ''), title: topicLong(c, t), text: topicShort(t), onclick: function () {
+        var list = $('aiTopic').value.split(/\s*,\s*/).filter(Boolean);
+        if (on) list = list.filter(function (x) { return norm(x) !== norm(t.title); });
+        else { list.push(t.title); t.clos.forEach(function (id) { if (aiSel.clos.indexOf(id) < 0) aiSel.clos.push(id); }); }
+        $('aiTopic').value = list.join(', '); renderAI();
+      } }));
+    });
+    topicInfo($('aiTopicInfo'), c, $('aiTopic').value);
     $('aiKeyState').textContent = data.settings.ai.geminiKey ? 'Using your Gemini key · model ' + data.settings.ai.model : 'No Gemini key yet — add one in Backup & Security, or use the browser option below.';
     renderAIResults();
   }
@@ -1577,6 +2024,13 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('fSearch').addEventListener('input', function (e) { filt.q = e.target.value; renderBank(); });
     $('addQ').addEventListener('click', function () { openQuestion(null); });
     $('pasteQ').addEventListener('click', openPaste);
+    $('fTopic').addEventListener('change', function (e) { filt.topic = e.target.value; renderBank(); });
+    $('oFile').addEventListener('change', function (e) { outlineFromFile(e.target.files[0]); });
+    $('oRead').addEventListener('click', readOutline);
+    $('oSave').addEventListener('click', saveOutline);
+    $('oCancel').addEventListener('click', function () { $('oDlg').close(); });
+    $('qTopic').addEventListener('input', onQTopic);
+    $('aiTopic').addEventListener('change', renderAI);
     $('psRead').addEventListener('click', readPaste);
     $('psAdd').addEventListener('click', addPaste);
     $('psCancel').addEventListener('click', function () { $('psDlg').close(); });
@@ -1601,7 +2055,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     // question dialog
     $('qForm').addEventListener('submit', saveQuestion);
     $('qCancel').addEventListener('click', function () { $('qDlg').close(); });
-    $('qCourse').addEventListener('change', function () { draftClos = []; renderQClos(); });
+    $('qCourse').addEventListener('change', function () { draftClos = []; renderQClos(); fillTopicList(); });
     $('qAddPart').addEventListener('click', function () { draftParts.push({ text: '', marks: 1 }); renderQParts(); });
     $('qMarks').addEventListener('input', updQTotal);
     $('qAddClo').addEventListener('click', function () {
