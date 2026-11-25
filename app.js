@@ -129,6 +129,25 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     });
     return { sig: str(e.sig, 40), body: body };
   }
+  function cleanPaper(p) {
+    p = p && typeof p === 'object' ? p : {};
+    var dp = defaultPaper();
+    var out = {
+        id: id(p.id), courseId: str(p.courseId, 64), exam: typeof p.exam === 'string' ? p.exam.slice(0, 120) : dp.exam,
+        season: ['Fall', 'Spring', 'Summer'].indexOf(p.season) >= 0 ? p.season : ((/(Fall|Spring|Summer)/.exec(p.term || '') || [])[1] || dp.season),
+        year: (function (y) { y = Math.round(Number(y)); return y >= 2000 && y <= 2100 ? y : dp.year; })(p.year != null ? p.year : (/(\d{4})/.exec(p.term || '') || [])[1]),
+        courseCode: str(p.courseCode, 40), courseTitle: str(p.courseTitle, 200),
+        examTime: /^\d{2}:\d{2}$/.test(p.examTime) ? p.examTime : '',
+        classSection: str(p.classSection, 120),
+        instructor: str(p.instructor, 120), timeAllowed: typeof p.timeAllowed === 'string' ? p.timeAllowed.slice(0, 40) : dp.timeAllowed,
+        date: /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : '', maxMarksOverride: p.maxMarksOverride === '' || p.maxMarksOverride == null ? '' : num(p.maxMarksOverride),
+        instructions: str(p.instructions, 3000), department: str(p.department, 150), university: str(p.university, 120), questionIds: arr(p.questionIds, 200).filter(function (x) { return typeof x === 'string'; }),
+        appendCloTable: !!p.appendCloTable, showPlo: p.showPlo !== false,
+        stemLines: p.stemLines === 'none' ? 'none' : 'lines', dataLines: p.dataLines === 'lines' ? 'lines' : 'none',
+        edit: cleanEdit(p.edit)
+      };
+    return out;
+  }
   function cleanData(d) {
     d = d && typeof d === 'object' ? d : {};
     var s = d.settings && typeof d.settings === 'object' ? d.settings : {};
@@ -150,20 +169,11 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         autoLockMin: s.autoLockMin == null || !isFinite(Number(s.autoLockMin)) ? def.autoLockMin : Math.min(240, Math.max(0, Math.round(Number(s.autoLockMin)))),
         ai: { geminiKey: str(ai.geminiKey, 300).trim(), model: (str(ai.model, 80).trim().replace(/[^A-Za-z0-9._-]/g, '')) || def.ai.model }
       },
-      paper: {
-        courseId: str(p.courseId, 64), exam: typeof p.exam === 'string' ? p.exam.slice(0, 120) : dp.exam,
-        season: ['Fall', 'Spring', 'Summer'].indexOf(p.season) >= 0 ? p.season : ((/(Fall|Spring|Summer)/.exec(p.term || '') || [])[1] || dp.season),
-        year: (function (y) { y = Math.round(Number(y)); return y >= 2000 && y <= 2100 ? y : dp.year; })(p.year != null ? p.year : (/(\d{4})/.exec(p.term || '') || [])[1]),
-        courseCode: str(p.courseCode, 40), courseTitle: str(p.courseTitle, 200),
-        examTime: /^\d{2}:\d{2}$/.test(p.examTime) ? p.examTime : '',
-        classSection: str(p.classSection, 120),
-        instructor: str(p.instructor, 120), timeAllowed: typeof p.timeAllowed === 'string' ? p.timeAllowed.slice(0, 40) : dp.timeAllowed,
-        date: /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : '', maxMarksOverride: p.maxMarksOverride === '' || p.maxMarksOverride == null ? '' : num(p.maxMarksOverride),
-        instructions: str(p.instructions, 3000), department: str(p.department, 150), university: str(p.university, 120), questionIds: arr(p.questionIds, 200).filter(function (x) { return typeof x === 'string'; }),
-        appendCloTable: !!p.appendCloTable, showPlo: p.showPlo !== false,
-        stemLines: p.stemLines === 'none' ? 'none' : 'lines', dataLines: p.dataLines === 'lines' ? 'lines' : 'none',
-        edit: cleanEdit(p.edit)
-      }
+      paper: cleanPaper(p),
+      papers: arr(d.papers, 300).map(function (x) {
+        x = x && typeof x === 'object' ? x : {};
+        return { id: id(x.id), name: str(x.name, 200), savedAt: str(x.savedAt, 40), paper: cleanPaper(x.paper) };
+      })
     };
   }
 
@@ -270,7 +280,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   function stamp() { var d = new Date(), p = function (n) { return String(n).padStart(2, '0'); }; return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()); }
 
   window.QBStore = {
-    newId: newId, cleanData: cleanData, cleanCourse: cleanCourse, cleanQuestion: cleanQuestion, exportable: exportable, sampleData: sampleData,
+    newId: newId, cleanData: cleanData, cleanPaper: cleanPaper, cleanCourse: cleanCourse, cleanQuestion: cleanQuestion, exportable: exportable, sampleData: sampleData,
     isEncrypted: isEncrypted, decryptEnvelope: decryptEnvelope, newKeyInfo: newKeyInfo, encryptWith: encryptWith,
     readRaw: readRaw, writeLocal: writeLocal, wipeLocal: wipeLocal,
     fsSupported: fsSupported, getLinkedFile: getLinkedFile, linkNewFile: linkNewFile, unlinkFile: unlinkFile, writeToHandle: writeToHandle,
@@ -647,6 +657,9 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   var RE_PAGE = /^\s*(?:page\s+\d+(?:\s*(?:of|\/)\s*\d+)?|-\s*\d+\s*-)\s*$/i;
   var RE_SHARED = /^\s*(?:(?:additional|supplementary|extra|further)\s+(?:information|data|details)\b|(?:exhibit|annex(?:ure)?|appendix)\b|case\s+(?:study|data)\b|data\s+for\s+questions?\b|use\s+the\s+following\s+(?:information|data)\b)/i;
   var RE_REFERS = /\b(?:financial\s+statements?|statements?\s+(?:given|provided)\s+(?:above|on|in)|pages?\s+\d|exhibit|annex(?:ure)?|appendix|(?:table|data|information)\s+(?:given|provided)\s+above|given\s+above|provided\s+(?:above|in\s+this\s+paper|on\s+pages?))/i;
+  // question-bank files: "Chapter 3: Risk", "Topic: NPV", "Week 4 - Bonds" set the topic of the questions below them
+  var RE_TOPIC = /^\s*(?:chapter|topic|unit|week|module|lecture|lesson)\b\s*(?:no\.?\s*)?[-#.:]?\s*\d{0,3}\s*[:.\-\u2013)]?\s*(.{0,100})$/i;
+  var RE_META = /^\s*(difficulty|level|type|question\s+type|topic|bloom(?:'s)?(?:\s+level)?)\s*[:\-\u2013]\s*(.{1,80})$/i;
   var RE_CLO = /\bCLOs?\s*[-:#]?\s*(\d{1,2}(?:\s*(?:,|&|and|\/)\s*(?:CLO\s*[-:#]?\s*)?\d{1,2})*)/gi;
   var RE_PLO = /\bPLOs?\s*[-:#]?\s*(\d{1,2}(?:\s*(?:,|&|and|\/)\s*(?:PLO\s*[-:#]?\s*)?\d{1,2})*)/gi;
   var MARK_PATTERNS = [
@@ -693,7 +706,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       .replace(/\*\*|__|`/g, '').replace(/^[ \t]*(?:#{1,6}|>)[ \t]*/gm, '').replace(/^[ \t]*[-*][ \t]+(?=\(?[a-z]\)|Q\d)/gim, '').split('\n');
     var qStyle = lines.some(function (l) { return RE_QSTYLE.test(l); });
     var hasNumbered = qStyle || lines.some(function (l) { return RE_Q.test(l); });
-    var out = [], cur = null, part = null, mode = 'stem', pre = [], shared = [], block = null, stopped = false;
+    var out = [], cur = null, part = null, mode = 'stem', pre = [], shared = [], block = null, stopped = false, topic = '';
 
     if (!hasNumbered) {
       // No "Q1"/"1." markers: every block separated by a blank line is one question.
@@ -708,7 +721,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
 
     function newQ(num, headText) {
       var e = extract(headText || '');
-      cur = { num: num, head: e.text.replace(/\s*\|\s*/g, ' ').trim(), headMarks: e.marks, clos: e.clos.slice(), plos: e.plos.slice(), stem: [], parts: [], answer: [] };
+      cur = { topic: topic, difficulty: '', qtype: '', num: num, head: e.text.replace(/\s*\|\s*/g, ' ').trim(), headMarks: e.marks, clos: e.clos.slice(), plos: e.plos.slice(), stem: [], parts: [], answer: [] };
       out.push(cur); part = null; mode = 'stem'; block = null;
     }
 
@@ -726,6 +739,20 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       }
       // "Question 1 | 10 Marks (CLO 2 | PLO 1)" from a PDF looks like a table row, so Q-style headings are checked first
       if ((qStyle ? RE_QSTYLE.test(line.split('|')[0]) : !isRow(line)) && (m = RE_Q.exec(line))) { newQ(Number(m[1] || m[2]), m[3]); return; }
+      var tm = RE_TOPIC.exec(line), mm2 = RE_META.exec(line);
+      if (mm2 && cur && !isRow(line)) { // "Difficulty: Hard", "Type: Numerical", "Topic: NPV" inside a question
+        var key = mm2[1].toLowerCase(), val = mm2[2].trim();
+        if (/^(difficulty|level)/.test(key)) { var dv = /easy|medium|hard/i.exec(val); if (dv) { cur.difficulty = dv[0].charAt(0).toUpperCase() + dv[0].slice(1).toLowerCase(); return; } }
+        else if (/type/.test(key)) { if (/numer|calcul|problem/i.test(val)) { cur.qtype = 'Numerical'; return; } if (/theor|concept|descript/i.test(val)) { cur.qtype = 'Theory'; return; } }
+        else if (key === 'topic') { cur.topic = val; return; }
+        else return;
+      }
+      if (tm && !isRow(line) && line.trim().length < 110 && !/[.?]$/.test(line.trim()) && !MARK_PATTERNS[0].test(line) && (mode !== 'part' || !part || /[.?)]$/.test(part.text.join(' ').trim()))) {
+        topic = (tm[1] || line).replace(/^\s*[:\-\u2013]\s*/, '').trim() || line.trim();
+        if (/^(?:chapter|unit|week|module|lecture|lesson)/i.test(line.trim()) && tm[1] && !/^\d/.test(tm[1])) topic = line.trim().replace(/\s*[:\-\u2013]\s*/, ': ');
+        block = null; if (cur) { mode = 'stem'; part = null; cur = null; }
+        return;
+      }
       if (!cur) { pre.push(line); return; }
       if (RE_SHARED.test(line) && !isRow(line)) {
         block = { targets: qNums(line), lines: [line.trim()] }; shared.push(block); mode = 'shared'; part = null; return;
@@ -772,7 +799,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       }
       var uniq = function (a) { return Array.from(new Set(a)).sort(function (x, y) { return x - y; }); };
       return {
-        num: q.num, title: title, stem: stem, parts: parts, data: '',
+        num: q.num, title: title, stem: stem, parts: parts, data: '', topic: q.topic || '', difficulty: q.difficulty || '', qtype: q.qtype || '',
         marks: parts.length ? 0 : (q.headMarks != null ? q.headMarks : def),
         cloNums: uniq(q.clos), ploNums: uniq(q.plos), answer: q.answer.join('\n').trim()
       };
@@ -1219,6 +1246,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     if (name === 'bank') renderBank();
     else if (name === 'ai') renderAI();
     else if (name === 'paper') renderPaper();
+    else if (name === 'import') renderImport();
     else if (name === 'courses') renderCourses();
     else if (name === 'backup') renderBackup();
   }
@@ -1333,6 +1361,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
 
   // ---------- question editor ----------
   var editing = null, draftParts = [], draftClos = [];
+  var addToPaperAfterSave = false;
   function openQuestion(q, preset) {
     if (!data.courses.length) { toast('Add a course first.', 'err'); return showTab('courses'); }
     editing = q || null;
@@ -1416,7 +1445,14 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     if (editing) {
       if (editing.courseId !== q.courseId) data.paper.questionIds = data.paper.questionIds.filter(function (x) { return x !== q.id; });
       data.questions[data.questions.indexOf(editing)] = q;
-    } else data.questions.unshift(q);
+    } else {
+      data.questions.unshift(q);
+      if (addToPaperAfterSave) {
+        if (data.paper.courseId !== q.courseId && data.paper.questionIds.length && !confirm('This question is for a different course than the paper. Add it to the paper anyway?')) { /* keep in bank only */ }
+        else { if (!data.paper.courseId) data.paper.courseId = q.courseId; data.paper.questionIds.push(q.id); toast('Question saved in the bank and added to the paper.'); }
+      }
+    }
+    addToPaperAfterSave = false;
     $('qDlg').close(); changed(); render(); toast('Question saved.');
   }
 
@@ -1599,6 +1635,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('pTime').value = known ? p.timeAllowed : '__custom';
     $('pTimeCustom').classList.toggle('hidden', known); $('pTimeCustom').value = known ? '' : p.timeAllowed;
     $('pStart').value = p.examTime; $('pDate').value = p.date; $('pMax').value = p.maxMarksOverride; $('pInstr').value = p.instructions;
+    $('paperName').textContent = paperName(p) + '  \u00b7  ' + paperStats(p);
     $('pCloTable').checked = p.appendCloTable; $('pShowPlo').checked = p.showPlo !== false; $('pDataLines').value = p.dataLines || 'none'; $('pStemLines').value = p.stemLines || 'lines';
     renderPaperLists(); renderRG();
   }
@@ -1627,6 +1664,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         h('div', { class: 'mini-main' }, h('b', { text: q.title || (q.stem || '').slice(0, 80) || '(untitled)' }), badges(q)),
         h('button', { class: 'btn small', text: '+ Add', onclick: function () { p.questionIds.push(q.id); changed(); renderPaperLists(); } })));
     });
+    $('paperName').textContent = paperName(p) + '  \u00b7  ' + paperStats(p);
     var t = paperTotal(), max = p.maxMarksOverride === '' ? t : p.maxMarksOverride;
     var sm = $('pSummary'); sm.textContent = qs.length + ' question(s) · total ' + D.fmtMarks(t) + ' · Max Marks on paper: ' + max;
     sm.className = 'summary' + (p.maxMarksOverride !== '' && Number(p.maxMarksOverride) !== t ? ' warn' : '');
@@ -1716,7 +1754,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var p = data.paper, base = baseBody(m), sig = hashStr(JSON.stringify(base));
     var stale = !!(p.edit && p.edit.sig !== sig);
     $('edStale').classList.toggle('hidden', !stale);
-    $('edReset').disabled = !p.edit;
+    $('edReset').disabled = !p.edit; $('pSaveBank').classList.toggle('hidden', !p.edit);
     var body = p.edit ? p.edit.body : base;
     var key = sig + '|' + (p.edit ? hashStr(JSON.stringify(p.edit.body)) : 'base');
     if (key === edKey && edEl.childNodes.length) return;        // nothing changed: keep the caret where it is
@@ -1822,7 +1860,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var body = domToModel(edEl);
     data.paper.edit = { sig: data.paper.edit && data.paper.edit.sig !== sig ? data.paper.edit.sig : sig, body: body };
     edKey = (data.paper.edit.sig) + '|' + hashStr(JSON.stringify(body));
-    $('edReset').disabled = false; $('edState').textContent = 'Edited \u2713 (saved)';
+    $('edReset').disabled = false; $('pSaveBank').classList.remove('hidden'); $('edState').textContent = 'Edited \u2713 (saved)';
     changed();
   }
   function restoreSel() {
@@ -1865,6 +1903,153 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     if (Array.prototype.some.call($('edSize').options, function (o) { return o.value === sz; })) $('edSize').value = sz;
   }
 
+  // ---------- UPLOAD QUESTION BANK (tab) ----------
+  var ibCands = [], ibCourse = '';
+  function qKey(q) { return norm([q.title, q.stem].concat(q.parts.map(function (p) { return p.text; })).join(' ')).replace(/[^a-z0-9 ]/g, ''); }
+  function renderImport() {
+    if (!course(ibCourse)) ibCourse = filt.course || data.paper.courseId || (data.courses[0] && data.courses[0].id) || '';
+    fillCourseSelect($('ibCourse'), ibCourse);
+    renderImportList();
+  }
+  async function importFile(file) {
+    if (!file) return;
+    if (!course($('ibCourse').value)) { toast('Add a course first (Courses & CLOs).', 'err'); return showTab('courses'); }
+    var msg = $('ibMsg'); msg.className = 'small'; msg.textContent = 'Reading ' + file.name + '\u2026';
+    try { readImportText(await window.QBOutline.readFile(file), file.name); }
+    catch (e) { msg.className = 'small err'; msg.textContent = e.message; }
+  }
+  function readImportText(text, name) {
+    var c = course($('ibCourse').value), msg = $('ibMsg'); if (!c) return;
+    var r = window.QBPaste.parse(text, { defaultMarks: $('ibMarks').value, sharedMode: $('ibShared').value });
+    var res = fromPasted(r, c, $('ibType').value);
+    var have = {}; data.questions.forEach(function (q) { if (q.courseId === c.id) have[qKey(q)] = 1; });
+    ibCands = res.qs.map(function (q) { var dup = !!have[qKey(q)]; return { q: q, on: !dup, dup: dup }; });
+    msg.className = 'small ' + (ibCands.length ? 'ok' : 'err');
+    msg.textContent = ibCands.length ? 'Read ' + (name || 'the text') + ': ' + ibCands.length + ' question(s) found' + (res.added.length ? '. Added to the course: ' + res.added.join(', ') : '') + '.'
+      : 'No questions found. Questions should start with Q1., Question 1 or 1.';
+    renderImportList();
+  }
+  function renderImportList() {
+    var box = clear($('ibList')), sum = clear($('ibSummary'));
+    $('ibBar').classList.toggle('hidden', !ibCands.length);
+    if (!ibCands.length) { sum.textContent = 'Upload a file to see its questions here.'; return; }
+    var sel = ibCands.filter(function (k) { return k.on; }), c = course($('ibCourse').value) || { clos: [] };
+    var topics = {}; ibCands.forEach(function (k) { var t = k.q.topic || '(no topic)'; topics[t] = (topics[t] || 0) + 1; });
+    var dups = ibCands.filter(function (k) { return k.dup; }).length;
+    sum.append(h('div', { class: 'ib-sum' },
+      h('b', { text: ibCands.length + ' questions \u00b7 ' + round(ibCands.reduce(function (s, k) { return s + total(k.q); }, 0)) + ' marks \u00b7 ' + sel.length + ' selected' }),
+      dups ? h('div', { class: 'small', text: dups + ' already in the bank (unticked).' }) : null,
+      h('div', { class: 'chips' }, Object.keys(topics).map(function (t) { return h('span', { class: 'badge topic', text: t + ' (' + topics[t] + ')' }); })),
+      h('div', { class: 'chips' }, c.clos.map(function (x) { var n = ibCands.filter(function (k) { return k.q.clos.indexOf(x.id) >= 0; }).length; return n ? h('span', { class: 'badge clo', text: x.label + ': ' + n }) : null; }))));
+    shownData = {};
+    ibCands.forEach(function (k, i) {
+      var q = k.q;
+      box.append(h('article', { class: 'qcard' + (k.on ? '' : ' off') },
+        h('div', { class: 'qhead' }, h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: k.on, onchange: function (e) { k.on = e.target.checked; renderImportList(); } }),
+          h('b', { text: ' ' + (i + 1) + '. ' + (q.title || (q.stem || '').slice(0, 70) || '(no heading)') })), h('div', { class: 'badges' }, k.dup ? h('span', { class: 'badge dup', text: 'Already in bank' }) : null), badges(q)),
+        questionBody(q, 'question ' + (i + 1)),
+        q.answer ? h('details', { class: 'answer' }, h('summary', { text: 'Answer key' }), h('p', { text: q.answer })) : null));
+    });
+    shownData = null;
+    $('ibAdd').disabled = !sel.length; $('ibAdd').textContent = 'Add ' + sel.length + ' selected to bank';
+  }
+  function importAdd() {
+    var picked = ibCands.filter(function (k) { return k.on; }).map(function (k) { return k.q; });
+    if (!picked.length) return;
+    var now = new Date().toISOString();
+    picked = picked.map(function (q) { return S.cleanQuestion(Object.assign({}, q, { createdAt: now, updatedAt: now })); });
+    data.questions = data.questions.concat(picked);
+    var cid = picked[0].courseId;
+    ibCands = []; $('ibMsg').textContent = ''; $('ibText').value = '';
+    changed(); filt.course = cid; filt.clo = ''; filt.topic = ''; showTab('bank');
+    toast(picked.length + ' question(s) added to the bank. Press Save to back up.');
+  }
+
+  // ---------- paper edits -> question bank ----------
+  function runsText(rs) { return (rs || []).map(function (r) { return r.t; }).join(''); }
+  function editsToBank(mode) {
+    var p = data.paper, body = p.edit && p.edit.body; if (!body) return;
+    var segs = [], cur = null;
+    body.forEach(function (b) {
+      if (b.k === 'h') { cur = { lines: [runsText(b.l).replace(/^\s*Q\d+\.\s*/, 'Q1. ') + '  ' + runsText(b.r)], cut: false }; segs.push(cur); return; }
+      if (!cur || cur.cut) return;
+      if (b.k === 'p' && /^Use the following information for Question/i.test(runsText(b.runs))) { cur.cut = true; return; } // next question's shared data
+      if (b.k === 't') (b.rows || []).forEach(function (r) { cur.lines.push(r.join(' | ')); });
+      else cur.lines.push(runsText(b.runs));
+    });
+    var qs = p.questionIds.map(question).filter(Boolean), updated = 0, created = 0;
+    segs.forEach(function (sg, i) {
+      var orig = qs[i]; if (!orig) return;
+      var c = course(orig.courseId), r = window.QBPaste.parse(sg.lines.join('\n'), { defaultMarks: 1, sharedMode: 'none' });
+      if (!r.questions.length) return;
+      var pq = fromPasted({ questions: [r.questions[0]] }, c, orig.qtype).qs[0];
+      var nq = Object.assign({}, orig, { title: pq.title, stem: pq.stem, parts: pq.parts, marks: pq.marks,
+        clos: pq.clos.length ? pq.clos : orig.clos, plos: pq.plos.length ? pq.plos : orig.plos, updatedAt: new Date().toISOString() });
+      if (mode === 'new') {
+        nq = S.cleanQuestion(Object.assign(nq, { id: '', createdAt: '' }));
+        data.questions.unshift(nq); p.questionIds[p.questionIds.indexOf(orig.id)] = nq.id; created++;
+      } else { data.questions[data.questions.indexOf(orig)] = S.cleanQuestion(nq); updated++; }
+    });
+    // the paper now matches the bank again: keep the formatting edits, refresh the link
+    p.edit.sig = hashStr(JSON.stringify(baseBody(paperModel()))); edKey = '';
+    changed(); renderPaperLists();
+    toast(mode === 'new' ? created + ' new question(s) saved in the bank and used on this paper.' : updated + ' question(s) updated in the bank.');
+  }
+
+  // ---------- several papers ----------
+  function paperName(p) {
+    var c = course(p.courseId);
+    var bits = [p.courseCode || (c && c.code) || 'No course', (p.exam || 'Exam').replace(/\s*Semester\s+Examinations?/i, '').trim(), p.season + ' ' + p.year];
+    if (p.classSection) bits.push(p.classSection);
+    return bits.filter(Boolean).join(' \u00b7 ');
+  }
+  function paperStats(p) {
+    var qs = (p.questionIds || []).map(question).filter(Boolean);
+    return qs.length + ' question' + (qs.length === 1 ? '' : 's') + ' \u00b7 ' + round(qs.reduce(function (s, q) { return s + total(q); }, 0)) + ' marks';
+  }
+  function savePaperToList() {
+    var p = data.paper; if (!p.questionIds.length) return;
+    var entry = { id: p.id, name: paperName(p), savedAt: new Date().toISOString(), paper: JSON.parse(JSON.stringify(p)) };
+    var i = data.papers.findIndex(function (x) { return x.id === p.id; });
+    if (i >= 0) data.papers[i] = entry; else data.papers.unshift(entry);
+    changed();
+  }
+  function newPaper() {
+    var old = data.paper;
+    if (old.questionIds.length) savePaperToList();
+    var keep = ['courseId', 'exam', 'season', 'year', 'instructor', 'department', 'university', 'timeAllowed', 'appendCloTable', 'showPlo', 'stemLines', 'dataLines', 'courseCode', 'courseTitle'];
+    var np = { id: S.newId() }; keep.forEach(function (k) { np[k] = old[k]; });
+    data.paper = S.cleanPaper(np); edKey = '';
+    $('afterDl').classList.add('hidden');
+    changed(); showTab('paper');
+    toast('New paper started' + (old.questionIds.length ? ' (the previous one is saved in My papers)' : '') + '. Add questions from the bank, upload a paper or use the random generator.');
+  }
+  function openPaper(entry, copy) {
+    if (data.paper.questionIds.length) savePaperToList();
+    var p = JSON.parse(JSON.stringify(entry.paper)); if (copy) { p.id = S.newId(); p.classSection = ''; p.date = ''; }
+    data.paper = S.cleanPaper(p); edKey = ''; $('mpDlg').close(); $('afterDl').classList.add('hidden');
+    changed(); showTab('paper'); toast(copy ? 'Copy opened as a new paper.' : 'Paper opened.');
+  }
+  function renderMyPapers() {
+    var box = clear($('mpList'));
+    var list = data.papers.slice();
+    if (data.paper.questionIds.length && !list.some(function (x) { return x.id === data.paper.id; })) list.unshift({ id: data.paper.id, name: paperName(data.paper), savedAt: '', paper: data.paper, unsaved: true });
+    if (!list.length) box.append(h('div', { class: 'empty small', text: 'No papers yet. Papers are saved here when you download them.' }));
+    list.forEach(function (e) {
+      var cur = e.id === data.paper.id;
+      box.append(h('div', { class: 'mp-item' + (cur ? ' current' : '') },
+        h('div', { class: 'mp-main' }, h('b', { text: e.name || paperName(e.paper) }),
+          h('span', { class: 'small muted', text: paperStats(e.paper) + (e.savedAt ? ' \u00b7 saved ' + new Date(e.savedAt).toLocaleString() : '') + (cur ? ' \u00b7 open now' : '') })),
+        cur ? null : h('button', { class: 'btn small primary', text: 'Open', onclick: function () { openPaper(e, false); } }),
+        h('button', { class: 'btn small', text: 'Copy', title: 'Start a new paper from a copy of this one', onclick: function () { openPaper(e, true); } }),
+        e.unsaved ? null : h('button', { class: 'btn small ghost danger-t', text: 'Delete', onclick: function () {
+          if (!confirm('Delete \u201c' + e.name + '\u201d from My papers? (Its questions stay in the bank.)')) return;
+          data.papers = data.papers.filter(function (x) { return x.id !== e.id; }); changed(); renderMyPapers();
+        } })));
+    });
+  }
+  function showMyPapers() { renderMyPapers(); $('mpDlg').showModal(); }
+
   async function downloadPaper() {
     var m = paperModel();
     if (!m.questions.length) return toast('Add at least one question to the paper.', 'err');
@@ -1874,7 +2059,8 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       var blob = await D.buildPaper(m);
       var name = (m.courseCode || 'Paper') + '_' + (data.paper.exam || 'Exam').split(' ')[0] + '_' + data.paper.season + data.paper.year + '.docx';
       S.download(blob, name.replace(/[^A-Za-z0-9._-]+/g, '_'));
-      toast('Paper downloaded.');
+      savePaperToList(); $('afterDl').classList.remove('hidden'); $('afterDl').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      toast('Paper downloaded and saved in My papers.');
     } catch (e) { toast('Could not create the Word file: ' + e.message, 'err'); }
   }
   async function downloadBankReport() {
@@ -2066,7 +2252,8 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         if (!x) { x = { id: S.newId(), label: lab, desc: '' }; c.clos.push(x); added.push(lab); }
         return x.id;
       });
-      return S.cleanQuestion({ courseId: c.id, title: pq.title, stem: pq.stem, data: pq.data, parts: pq.parts, marks: pq.marks, clos: ids, plos: mapPlos(c, pq.ploNums, added), answer: pq.answer, qtype: qtype || '' });
+      return S.cleanQuestion({ courseId: c.id, title: pq.title, stem: pq.stem, data: pq.data, parts: pq.parts, marks: pq.marks, clos: ids, plos: mapPlos(c, pq.ploNums, added), answer: pq.answer,
+        qtype: pq.qtype || qtype || '', topic: pq.topic || '', difficulty: pq.difficulty || '' });
     });
     if (added.length) { c.clos.sort(function (a, b) { return a.label.localeCompare(b.label, undefined, { numeric: true }); }); changed(); }
     return { qs: qs, added: added };
@@ -2083,7 +2270,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         if (!x) { x = { id: S.newId(), label: lab, desc: '' }; c.clos.push(x); added.push(lab); }
         return x.id;
       });
-      return { on: true, q: S.cleanQuestion({ courseId: c.id, title: pq.title, stem: pq.stem, data: pq.data, parts: pq.parts, marks: pq.marks, clos: ids, plos: mapPlos(c, pq.ploNums, added), answer: pq.answer, qtype: $('psType').value }) };
+      return { on: true, q: S.cleanQuestion({ courseId: c.id, title: pq.title, stem: pq.stem, data: pq.data, parts: pq.parts, marks: pq.marks, clos: ids, plos: mapPlos(c, pq.ploNums, added), answer: pq.answer, qtype: pq.qtype || $('psType').value, topic: pq.topic || '', difficulty: pq.difficulty || '' }) };
     });
     if (added.length) { c.clos.sort(function (a, b) { return a.label.localeCompare(b.label, undefined, { numeric: true }); }); changed(); }
     msg.className = 'small ' + (psCandidates.length ? 'ok' : 'err');
@@ -2560,6 +2747,31 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('edReset').addEventListener('click', rebuild);
     $('edRebuild').addEventListener('click', function () { data.paper.edit = null; edKey = ''; changed(); renderPaperLists(); });
     $('edKeep').addEventListener('click', function () { var m = paperModel(); data.paper.edit.sig = hashStr(JSON.stringify(baseBody(m))); edKey = ''; changed(); renderPaperLists(); });
+    $('pNewQ').addEventListener('click', function () {
+      if (!data.paper.courseId && data.courses[0]) data.paper.courseId = data.courses[0].id;
+      addToPaperAfterSave = true; openQuestion(null, { courseId: data.paper.courseId });
+    });
+    $('qDlg').addEventListener('close', function () { setTimeout(function () { addToPaperAfterSave = false; }, 0); });
+    $('pSaveBank').addEventListener('click', function () {
+      var dlg = $('sbDlg'); dlg.returnValue = ''; dlg.showModal();
+      dlg.addEventListener('close', function f() { dlg.removeEventListener('close', f); if (dlg.returnValue === 'ok') editsToBank(document.querySelector('input[name=sbmode]:checked').value); });
+    });
+    // upload bank tab
+    $('ibCourse').addEventListener('change', function (e) { ibCourse = e.target.value; if (ibCands.length) toast('Course changed \u2014 upload or read the file again so CLOs match this course.'); });
+    $('ibDrop').addEventListener('click', function () { $('ibFile').value = ''; $('ibFile').click(); });
+    $('ibDrop').addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('ibFile').click(); } });
+    $('ibDrop').addEventListener('dragover', function (e) { e.preventDefault(); $('ibDrop').classList.add('over'); });
+    $('ibDrop').addEventListener('dragleave', function () { $('ibDrop').classList.remove('over'); });
+    $('ibDrop').addEventListener('drop', function (e) { e.preventDefault(); $('ibDrop').classList.remove('over'); if (e.dataTransfer.files[0]) importFile(e.dataTransfer.files[0]); });
+    $('ibFile').addEventListener('change', function (e) { importFile(e.target.files[0]); });
+    $('ibRead').addEventListener('click', function () { if ($('ibText').value.trim()) readImportText($('ibText').value, ''); });
+    $('ibAll').addEventListener('click', function () { ibCands.forEach(function (k) { k.on = true; }); renderImportList(); });
+    $('ibNone').addEventListener('click', function () { ibCands.forEach(function (k) { k.on = false; }); renderImportList(); });
+    $('ibAdd').addEventListener('click', importAdd);
+    ['topNew', 'newPaper', 'dlAnother', 'mpNew'].forEach(function (id) { $(id).addEventListener('click', function () { if ($('mpDlg').open) $('mpDlg').close(); newPaper(); }); });
+    ['topPapers', 'myPapers'].forEach(function (id) { $(id).addEventListener('click', showMyPapers); });
+    $('mpClose').addEventListener('click', function () { $('mpDlg').close(); });
+    $('dlStay').addEventListener('click', function () { $('afterDl').classList.add('hidden'); });
     $('pTpl').addEventListener('click', function () { $('tplFile').value = ''; $('tplFile').click(); });
     $('pSearch').addEventListener('input', renderPaperLists);
     $('pDownload').addEventListener('click', downloadPaper);

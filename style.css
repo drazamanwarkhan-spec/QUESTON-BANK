@@ -253,3 +253,20 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .pv-head { position: relative; display: block; text-align: center; min-height: 80px; }
 .pv-head .pv-logo { position: absolute; left: 0; top: 0; }
 .pv-head .pv-dept, .pv-head .pv-exam, .pv-head .pv-uni { text-align: center; }
+
+.paper-strip { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--brand-soft); border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; }
+.paper-name { font-weight: 700; color: var(--brand); }
+.done-banner { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: #e6f4ec; border: 1px solid #b9dfc8; border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; }
+.mp-item { display: flex; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.mp-item.current { border-color: var(--brand); background: #fffaf8; }
+.mp-main { flex: 1; min-width: 0; }
+.mp-main b { display: block; }
+
+.dropzone { border: 2px dashed #cfccc5; border-radius: 12px; padding: 26px; text-align: center; cursor: pointer; background: #fcfbf9; display: flex; flex-direction: column; gap: 6px; align-items: center; margin: 8px 0; }
+.dropzone:hover, .dropzone.over { border-color: var(--brand-2); background: #fff6f2; }
+.dz-icon { font-size: 30px; }
+.tips summary { cursor: pointer; color: var(--muted); }
+.tips ul { padding-left: 18px; margin: 6px 0; }
+.ib-sum { background: #f9f8f5; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; color: var(--ink); }
+.ib-sum .chips { margin-top: 6px; }
+.badge.dup { background: #fff1d6; color: var(--warn); }

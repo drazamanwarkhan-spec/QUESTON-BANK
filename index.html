@@ -37,12 +37,15 @@
   </div>
   <nav class="tabs" role="tablist">
     <button class="tab active" data-tab="bank" role="tab">Question Bank</button>
+    <button class="tab" data-tab="import" role="tab">⬆ Upload Bank</button>
     <button class="tab" data-tab="paper" role="tab">Paper Builder</button>
     <button class="tab" data-tab="courses" role="tab">Courses &amp; CLOs</button>
     <button class="tab" data-tab="backup" role="tab">Backup &amp; Security</button>
   </nav>
   <div class="top-actions">
     <span id="saveStatus" class="save-status">Saved</span>
+    <button id="topNew" class="btn" title="Start a new question paper">➕ New paper</button>
+    <button id="topPapers" class="btn ghost" title="Papers you have made">📂 My papers</button>
     <button id="lockNow" class="btn ghost hidden" title="Lock now">Lock</button>
     <button id="saveBtn" class="btn primary" title="Save to this PC (Ctrl+S)">Save</button>
   </div>
@@ -73,10 +76,59 @@
     <div id="qList" class="qlist"></div>
   </section>
 
+  <!-- UPLOAD QUESTION BANK -->
+  <section id="tab-import" class="panel hidden">
+    <div class="grid2">
+      <div class="card">
+        <h2>Upload a question bank</h2>
+        <p class="small muted">Upload a Word file (or PDF) with many questions — a whole question bank. The app reads every question with its parts, marks, CLOs, PLOs, tables, chapters/topics and answers. You check them, then add them to the bank in one click.</p>
+        <div class="field"><label for="ibCourse">Course these questions belong to</label><select id="ibCourse"></select></div>
+        <div class="row3">
+          <div class="field"><label for="ibMarks">Marks when none given</label><input id="ibMarks" type="number" min="0.5" step="0.5" value="1"></div>
+          <div class="field"><label for="ibType">Type</label><select id="ibType"><option value="">Detect / none</option><option>Theory</option><option>Numerical</option></select></div>
+          <div class="field"><label for="ibShared">Shared tables / data</label><select id="ibShared"><option value="auto">Attach to questions that refer to it</option><option value="first">First question only</option><option value="all">Every question</option><option value="none">Don’t keep</option></select></div>
+        </div>
+        <div id="ibDrop" class="dropzone" tabindex="0" role="button" aria-label="Upload question bank file">
+          <div class="dz-icon">📄</div>
+          <div><b>Drop the Word file here</b> or <span class="link">choose a file</span></div>
+          <div class="small muted">Word, PDF and most other document files</div>
+        </div>
+        <input id="ibFile" type="file" class="hidden">
+        <details class="nokey"><summary>Or paste the questions as text</summary>
+          <textarea id="ibText" rows="8" maxlength="2000000" placeholder="Chapter 1: …&#10;Q1. … (5 marks) CLO 1"></textarea>
+          <div class="ai-actions"><button id="ibRead" class="btn">Read text</button></div></details>
+        <p id="ibMsg" class="small"></p>
+        <details class="tips"><summary class="small">What does the app recognise?</summary>
+          <ul class="small">
+            <li>Questions: <b>Q1.</b>, <b>Question 1</b>, <b>1.</b> — parts: <b>(a)</b>, <b>a)</b>, <b>(i)</b></li>
+            <li>Marks: <b>(5 marks)</b>, <b>[5]</b>, <b>Marks: 5</b> — CLOs/PLOs: <b>CLO 1</b>, <b>(CLO 2 | PLO 1, 3)</b></li>
+            <li>Chapters/topics: <b>Chapter 3: …</b>, <b>Topic: …</b>, <b>Week 4 – …</b> (applied to the questions below)</li>
+            <li><b>Difficulty: Easy/Medium/Hard</b>, <b>Type: Numerical/Theory</b>, <b>Answer: …</b>, tables, and data shared by several questions</li>
+          </ul></details>
+      </div>
+      <div class="card">
+        <h2>Questions found</h2>
+        <div id="ibSummary" class="small muted">Upload a file to see its questions here.</div>
+        <div id="ibBar" class="ai-actions hidden">
+          <button id="ibAll" class="btn small">Select all</button><button id="ibNone" class="btn small">Select none</button>
+          <span class="spacer"></span>
+          <button id="ibAdd" class="btn primary">Add selected to bank</button>
+        </div>
+        <div id="ibList" class="qlist"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- PAPER BUILDER -->
   <section id="tab-paper" class="panel hidden">
     <div class="grid2">
       <div class="card">
+        <div class="paper-strip"><div><span class="small muted">Current paper</span><div id="paperName" class="paper-name"></div></div>
+          <div class="ai-actions tight"><button id="newPaper" class="btn small primary">➕ New paper</button><button id="myPapers" class="btn small">📂 My papers</button></div></div>
+        <div id="afterDl" class="done-banner hidden">
+          <div><b>✓ Paper downloaded</b> and saved in <b>My papers</b>. What next?</div>
+          <div class="ai-actions tight"><button id="dlAnother" class="btn primary small">➕ Make another paper</button><button id="dlStay" class="btn small">Keep working on this one</button></div>
+        </div>
         <h2>Paper details</h2>
         <div class="field"><label for="pCourse">Course</label><select id="pCourse"></select></div>
         <div class="row2">
@@ -132,6 +184,10 @@
 
       <div class="card">
         <h2>Questions on this paper</h2>
+        <div class="ai-actions tight">
+          <button id="pNewQ" class="btn small primary">➕ Write a new question</button>
+          <button id="pSaveBank" class="btn small hidden" title="Copy the changes you typed on the paper into the question bank">💾 Save paper edits to bank</button>
+        </div>
         <div id="pSelected" class="qlist compact"></div>
         <h3>Add from question bank</h3>
         <input id="pSearch" type="search" placeholder="Search this course's questions…">
@@ -364,6 +420,27 @@
         <p class="small muted">Example: Week 3: Topic name [CLO 1, CLO 2]</p></div>
     </div>
     <div class="dlg-actions"><button type="button" id="oCancel" class="btn ghost">Cancel</button><button type="button" id="oSave" class="btn primary">Save to course</button></div>
+  </form>
+</dialog>
+
+<!-- My papers -->
+<dialog id="mpDlg" class="dlg">
+  <div class="dlg-body">
+    <h2>My papers</h2>
+    <p class="small muted">Every paper you download is saved here on this PC. Open one to change it or download it again, or make a copy to start a similar paper.</p>
+    <div id="mpList" class="qlist compact"></div>
+    <div class="dlg-actions"><button type="button" id="mpNew" class="btn">➕ New paper</button><span class="spacer"></span><button type="button" id="mpClose" class="btn primary">Close</button></div>
+  </div>
+</dialog>
+
+<!-- Save paper edits to bank -->
+<dialog id="sbDlg" class="dlg small-dlg">
+  <form method="dialog" class="dlg-body">
+    <h2>Save paper edits to the bank</h2>
+    <p class="small">The text you typed on the paper (headings, statements, parts, marks, CLOs/PLOs) will be copied into the question bank.</p>
+    <label class="radio"><input type="radio" name="sbmode" value="update" checked> Update the original questions in the bank</label>
+    <label class="radio"><input type="radio" name="sbmode" value="new"> Save them as new questions (keep the originals unchanged)</label>
+    <div class="dlg-actions"><button value="cancel" class="btn ghost">Cancel</button><button value="ok" class="btn primary">Save to bank</button></div>
   </form>
 </dialog>
 
