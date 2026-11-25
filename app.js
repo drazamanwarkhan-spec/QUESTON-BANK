@@ -123,7 +123,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         department: typeof s.department === 'string' ? s.department.slice(0, 120) : def.department,
         backupMode: ['auto', 'download', 'browser'].indexOf(s.backupMode) >= 0 ? s.backupMode : def.backupMode,
         autoLockMin: s.autoLockMin == null || !isFinite(Number(s.autoLockMin)) ? def.autoLockMin : Math.min(240, Math.max(0, Math.round(Number(s.autoLockMin)))),
-        ai: { geminiKey: str(ai.geminiKey, 200).trim(), model: (str(ai.model, 80).trim().replace(/[^A-Za-z0-9._-]/g, '')) || def.ai.model }
+        ai: { geminiKey: str(ai.geminiKey, 300).trim(), model: (str(ai.model, 80).trim().replace(/[^A-Za-z0-9._-]/g, '')) || def.ai.model }
       },
       paper: {
         courseId: str(p.courseId, 64), exam: typeof p.exam === 'string' ? p.exam.slice(0, 120) : dp.exam,
@@ -1878,7 +1878,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
   async function aiConnect() {
     var k = $('aiKeyInline').value.trim(), m = $('aiConnectMsg');
-    if (!/^[A-Za-z0-9_-]{20,200}$/.test(k)) { m.className = 'small err'; m.textContent = 'That doesn’t look like a Gemini key. Copy the whole key from Google AI Studio.'; return; }
+    if (!/^[A-Za-z0-9._-]{20,300}$/.test(k)) { m.className = 'small err'; m.textContent = 'That doesn’t look like a Gemini key. Copy the whole key from Google AI Studio.'; return; }
     m.className = 'small'; m.textContent = 'Checking the key with Google…';
     try {
       var models = await AI.listModels(k);
@@ -2236,7 +2236,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('getKey').addEventListener('click', function () { window.open(AI.KEY_PAGE, '_blank', 'noopener,noreferrer'); });
     $('saveKey').addEventListener('click', function () {
       var k = $('aiKey').value.trim();
-      if (!/^[A-Za-z0-9_-]{20,200}$/.test(k)) return toast('That does not look like a Gemini API key.', 'err');
+      if (!/^[A-Za-z0-9._-]{20,300}$/.test(k)) return toast('That does not look like a Gemini API key.', 'err');
       data.settings.ai.geminiKey = k; changed(); saveLocal(); renderBackup();
       toast(keyInfo ? 'Key saved (encrypted on this PC).' : 'Key saved on this PC. Tip: set a password so the key is encrypted.');
     });
