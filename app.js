@@ -119,15 +119,24 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       return { t: str(r.t, 20000), b: !!r.b, i: !!r.i, u: !!r.u, s: sz >= 6 && sz <= 72 ? Math.round(sz * 2) / 2 : 0, f: typeof r.f === 'string' && FONT_OK.test(r.f) ? r.f : '' };
     }).filter(function (r) { return r.t; });
   }
-  function cleanEdit(e) {
-    if (!e || typeof e !== 'object' || !Array.isArray(e.body)) return null;
-    var body = e.body.slice(0, 5000).map(function (b) {
+  function cleanBlocks(list) {
+    return arr(list, 5000).map(function (b) {
       b = b && typeof b === 'object' ? b : {};
       if (b.k === 'h') return { k: 'h', l: cleanRuns(b.l), r: cleanRuns(b.r) };
       if (b.k === 't') return { k: 't', lines: !!b.lines, rows: arr(b.rows, 500).map(function (row) { return arr(row, 30).map(function (c) { return str(c, 1000); }); }) };
       return { k: 'p', a: ['both', 'left', 'center', 'right'].indexOf(b.a) >= 0 ? b.a : 'both', keep: !!b.keep, runs: cleanRuns(b.runs) };
     });
-    return { sig: str(e.sig, 40), body: body };
+  }
+  // edits are kept per question: { segs: { questionId: { sig, body } } }
+  function cleanEdit(e) {
+    if (!e || typeof e !== 'object' || !e.segs || typeof e.segs !== 'object') return null;
+    var out = {}, n = 0;
+    Object.keys(e.segs).slice(0, 300).forEach(function (k) {
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(k)) return;
+      var v = e.segs[k]; if (!v || typeof v !== 'object') return;
+      out[k] = { sig: str(v.sig, 40), body: cleanBlocks(v.body) }; n++;
+    });
+    return n ? { segs: out } : null;
   }
   function cleanPaper(p) {
     p = p && typeof p === 'object' ? p : {};
@@ -181,7 +190,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   function exportable(d) {
     return {
       app: 'dsu-question-bank', version: 1, exportedAt: new Date().toISOString(),
-      courses: d.courses, questions: d.questions,
+      courses: d.courses, questions: d.questions, papers: d.papers || [], paper: d.paper,
       settings: { university: d.settings.university, deptPrefix: d.settings.deptPrefix, department: d.settings.department }
     };
   }
@@ -388,10 +397,18 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   // blocks: {k:'p', a:'both|left|center|right', keep, runs:[{t,b,i,u,s,f}]}  |  {k:'h', l:[runs], r:[runs]}  |  {k:'t', rows:[[text]], lines}
   // The same model is shown in the editable paper and written to Word, so edits survive the download.
   function P(text, o) { o = o || {}; return { k: 'p', a: o.a || 'both', keep: !!o.keep, runs: text ? [{ t: text, b: !!o.b }] : [] }; }
+  // One segment per question: [shared data printed before it] + heading + statement + parts.
+  function buildSegments(qs, opts) {
+    var flat = buildBody(qs, opts), segs = [], starts = flat.starts;
+    qs.forEach(function (q, i) { segs.push({ id: q.id || ('q' + i), blocks: flat.slice(starts[i], i + 1 < qs.length ? starts[i + 1] : flat.length) }); });
+    return segs;
+  }
   function buildBody(qs, opts) {
     opts = opts || {};
-    var out = [], printed = {};
+    var out = [], printed = {}, starts = [];
+    out.starts = starts;
     qs.forEach(function (q, i) {
+      starts.push(out.length);
       if (q.data && q.data.trim() && !printed[q.data]) {
         printed[q.data] = 1;
         var users = []; qs.forEach(function (x, k) { if (x.data === q.data) users.push(k + 1); });
@@ -636,7 +653,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     });
   }
 
-  window.QBDocx = { buildBody: buildBody, modelXml: modelXml, prepareTemplate: prepareTemplate, ploText: ploText, buildPaper: buildPaper, buildBankReport: buildBankReport, questionTotal: questionTotal, fmtMarks: fmtMarks, letter: letter, fmtDate: fmtDate, _esc: esc };
+  window.QBDocx = { buildSegments: buildSegments, buildBody: buildBody, modelXml: modelXml, prepareTemplate: prepareTemplate, ploText: ploText, buildPaper: buildPaper, buildBankReport: buildBankReport, questionTotal: questionTotal, fmtMarks: fmtMarks, letter: letter, fmtDate: fmtDate, _esc: esc };
 })();
 
 ;
@@ -1696,8 +1713,8 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       courseTitle: p.courseTitle || c.title, courseCode: p.courseCode || c.code, examTime: fmtTime(p.examTime), classSection: p.classSection, instructor: p.instructor, timeAllowed: p.timeAllowed,
       date: p.date, maxMarks: p.maxMarksOverride === '' || qsOverride ? sum : p.maxMarksOverride, instructions: p.instructions,
       appendCloTable: p.appendCloTable, cloInfo: c.clos.map(function (x) { return { label: x.label, desc: x.desc }; }),
-      showPlo: p.showPlo !== false, body: qsOverride ? null : (p.edit ? p.edit.body : null),
-      questions: qs.map(function (q) { return { title: q.title, stem: q.stem, data: q.data || '', parts: q.parts, marks: q.marks, cloLabels: cloLabels(q), ploLabels: ploLabels(q),
+      showPlo: p.showPlo !== false, body: null,
+      questions: qs.map(function (q) { return { id: q.id, title: q.title, stem: q.stem, data: q.data || '', parts: q.parts, marks: q.marks, cloLabels: cloLabels(q), ploLabels: ploLabels(q),
         tableLines: q.tableLines || p.stemLines || 'lines', dataLines: q.dataLines || p.dataLines || 'none' }; })
     };
   }
@@ -1716,6 +1733,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     }
     flush(); return wrap;
   }
+  function finishModel(m) { if (data.paper.edit) m.body = flatten(assemble(m)); return m; }
   function renderPreview(qs, max) {
     var m = paperModel(), box = clear($('preview'));
     box.append(
@@ -1750,19 +1768,37 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     return edEl;
   }
   function hashStr(s) { var h1 = 5381; for (var i = 0; i < s.length; i++) h1 = ((h1 << 5) + h1 + s.charCodeAt(i)) | 0; return (h1 >>> 0).toString(36) + '.' + s.length; }
-  function baseBody(m) { return D.buildBody(m.questions, { showPlo: m.showPlo }); }
+  function baseSegs(m) { return D.buildSegments(m.questions, { showPlo: m.showPlo }); }
+  function baseBody(m) { return flatten(baseSegs(m)); }
+  function flatten(segs) { var out = []; segs.forEach(function (s) { s.blocks.forEach(function (b) { out.push(b); }); }); return out; }
+  // signature of a question's own content, ignoring its number (so reordering keeps edits)
+  function segSig(seg) {
+    return hashStr(JSON.stringify(seg.blocks).replace(/"t":"Q\d+\. /g, '"t":"Q#. ').replace(/Use the following information for Questions? [\d, and]+:/g, 'Use the following information:'));
+  }
+  // paper = each question's edited version if that question did not change, otherwise its fresh version
+  function assemble(m) {
+    var ed = data.paper.edit && data.paper.edit.segs, segs = baseSegs(m);
+    return segs.map(function (s, i) {
+      var e = ed && ed[s.id];
+      if (!e || e.sig !== segSig(s)) return s;
+      var body = JSON.parse(JSON.stringify(e.body));
+      var bh = s.blocks.filter(function (b) { return b.k === 'h'; })[0], eh = body.filter(function (b) { return b.k === 'h'; })[0];
+      if (bh && eh && eh.l[0]) eh.l[0].t = eh.l[0].t.replace(/^Q\d+\./, 'Q' + (i + 1) + '.');            // keep numbering right
+      var bl = s.blocks[0], el = body[0];
+      if (bl && el && bl.k === 'p' && el.k === 'p' && /^Use the following information/.test((el.runs[0] || {}).t || '')) el.runs = [Object.assign({}, el.runs[0], { t: bl.runs.map(function (r) { return r.t; }).join('') })].concat(el.runs.slice(1).filter(function () { return false; }));
+      return { id: s.id, blocks: body, edited: true };
+    });
+  }
   function renderEditor(m) {
-    var p = data.paper, base = baseBody(m), sig = hashStr(JSON.stringify(base));
-    var stale = !!(p.edit && p.edit.sig !== sig);
-    $('edStale').classList.toggle('hidden', !stale);
-    $('edReset').disabled = !p.edit; $('pSaveBank').classList.toggle('hidden', !p.edit);
-    var body = p.edit ? p.edit.body : base;
-    var key = sig + '|' + (p.edit ? hashStr(JSON.stringify(p.edit.body)) : 'base');
+    var p = data.paper, segs = assemble(m), body = flatten(segs);
+    $('edStale').classList.add('hidden');
+    var edited = segs.some(function (s) { return s.edited; });
+    $('edReset').disabled = !p.edit; $('pSaveBank').classList.toggle('hidden', !edited);
+    var key = hashStr(JSON.stringify(body)) + '|' + segs.map(function (s) { return s.id; }).join(',');
     if (key === edKey && edEl.childNodes.length) return;        // nothing changed: keep the caret where it is
-    if (document.activeElement === edEl && p.edit && !stale) { edKey = key; return; }
     edKey = key;
-    modelToDom(body, edEl);
-    $('edState').textContent = p.edit ? 'Edited \u2713 (saved)' : '';
+    modelToDom(segs, edEl);
+    $('edState').textContent = edited ? 'Edited ✓ (saved)' : '';
   }
   function runStyle(el, r) {
     if (r.b) el.style.fontWeight = 'bold';
@@ -1782,9 +1818,13 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     });
   }
   var CSS_ALIGN = { both: 'justify', left: 'left', center: 'center', right: 'right' };
-  function modelToDom(blocks, root) {
+  function modelToDom(segs, root) {
     root.replaceChildren();
-    (blocks || []).forEach(function (b) {
+    segs.forEach(function (sg) { sg.blocks.forEach(function (b) { var el = blockToDom(b); el.setAttribute('data-q', sg.id); root.appendChild(el); }); });
+  }
+  function blockToDom(b) {
+    var root = { appendChild: function (x) { this.el = x; } };
+    (function () {
       if (b.k === 't') {
         var rows = b.rows || [];
         root.appendChild(h('table', { class: 'pv-table' + (b.lines ? '' : ' nolines'), 'data-lines': b.lines ? '1' : '0' },
@@ -1800,7 +1840,8 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       var d = h('div', { class: 'pb' + (b.keep ? ' keep' : '') }); d.style.textAlign = CSS_ALIGN[b.a] || 'justify';
       if (b.runs && b.runs.length) appendRuns(d, b.runs); else d.appendChild(document.createElement('br'));
       root.appendChild(d);
-    });
+    })();
+    return root.el;
   }
   // --- read the edited page back into the document model ---
   function fmtOf(el, block) {
@@ -1828,40 +1869,57 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   var BLOCK = /^(DIV|P|H[1-6]|LI|UL|OL|BLOCKQUOTE|SECTION|ARTICLE)$/;
   function alignOf(el) { var t = getComputedStyle(el).textAlign; return t === 'center' ? 'center' : (t === 'right' || t === 'end') ? 'right' : t === 'justify' ? 'both' : 'left'; }
   function domToModel(root) {
-    var out = [];
+    var out = [], lastQ = '';
+    var tagQ = function (n) { var t = n.nodeType === 1 ? (n.closest('[data-q]') || n.querySelector('[data-q]')) : null; if (t) lastQ = t.getAttribute('data-q'); return lastQ; };
     (function collect(container) {
       var inline = null;
       Array.prototype.forEach.call(container.childNodes, function (n) {
         if (n.nodeType === 1 && n.tagName === 'TABLE') {
-          inline = null;
-          out.push({ k: 't', lines: n.getAttribute('data-lines') !== '0' && !n.classList.contains('nolines'),
+          inline = null; tagQ(n);
+          out.push({ q: lastQ, k: 't', lines: n.getAttribute('data-lines') !== '0' && !n.classList.contains('nolines'),
             rows: Array.prototype.map.call(n.querySelectorAll('tr'), function (tr) { return Array.prototype.map.call(tr.children, function (c) { return c.textContent.replace(/\u00a0/g, ' ').trim(); }); }) });
         } else if (n.nodeType === 1 && n.classList.contains('qh')) {
           inline = null;
-          var l = n.querySelector('.l'), r = n.querySelector('.r');
-          out.push(l && r ? { k: 'h', l: runsOf(l), r: runsOf(r) } : { k: 'p', a: 'both', runs: runsOf(n) });
+          var l = n.querySelector('.l'), r = n.querySelector('.r'); tagQ(n);
+          out.push(l && r ? { q: lastQ, k: 'h', l: runsOf(l), r: runsOf(r) } : { q: lastQ, k: 'p', a: 'both', runs: runsOf(n) });
         } else if (n.nodeType === 1 && BLOCK.test(n.tagName)) {
           inline = null;
           if (n.querySelector('div,p,table,h1,h2,h3,li')) collect(n);
-          else out.push({ k: 'p', a: alignOf(n), keep: n.classList.contains('keep'), runs: runsOf(n) });
+          else { tagQ(n); out.push({ q: lastQ, k: 'p', a: alignOf(n), keep: n.classList.contains('keep'), runs: runsOf(n) }); }
         } else if (n.nodeType === 3 && !n.nodeValue.trim() && !inline) {
           /* whitespace between blocks */
         } else { // loose text / inline element typed straight into the page
           var tmp = document.createElement('span'); tmp.appendChild(n.cloneNode(true)); container.appendChild(tmp);
           var rs = runsOf(tmp); tmp.remove();
-          if (!inline) { inline = { k: 'p', a: alignOf(container), runs: [] }; out.push(inline); }
+          if (!inline) { inline = { q: lastQ, k: 'p', a: alignOf(container), runs: [] }; out.push(inline); }
           inline.runs = inline.runs.concat(rs);
         }
       });
     })(root);
     return out;
   }
+  function normBlocks(list) {
+    var R = function (rs) { return (rs || []).map(function (r) { return [r.t, !!r.b, !!r.i, !!r.u, r.s || 0, r.f || '']; }).filter(function (r) { return r[0]; }); };
+    return (list || []).map(function (b) {
+      if (b.k === 't') return ['t', !!b.lines, b.rows];
+      if (b.k === 'h') return ['h', R(b.l), R(b.r)];
+      return ['p', b.a || 'both', !!b.keep, R(b.runs)];
+    });
+  }
   function saveEdit() {
-    var m = paperModel(), sig = hashStr(JSON.stringify(baseBody(m)));
-    var body = domToModel(edEl);
-    data.paper.edit = { sig: data.paper.edit && data.paper.edit.sig !== sig ? data.paper.edit.sig : sig, body: body };
-    edKey = (data.paper.edit.sig) + '|' + hashStr(JSON.stringify(body));
-    $('edReset').disabled = false; $('pSaveBank').classList.remove('hidden'); $('edState').textContent = 'Edited \u2713 (saved)';
+    edTimer = null;
+    var m = paperModel(), segs = baseSegs(m), blocks = domToModel(edEl), byQ = {}, firstId = segs[0] && segs[0].id;
+    blocks.forEach(function (b) { var q = b.q || firstId; delete b.q; (byQ[q] = byQ[q] || []).push(b); });
+    var ed = {};
+    segs.forEach(function (s) {
+      var mine = byQ[s.id] || [];
+      if (JSON.stringify(normBlocks(mine)) === JSON.stringify(normBlocks(s.blocks))) return;     // unchanged question: nothing to keep
+      ed[s.id] = { sig: segSig(s), body: mine };
+    });
+    data.paper.edit = Object.keys(ed).length ? { segs: ed } : null;
+    edKey = hashStr(JSON.stringify(flatten(assemble(m)))) + '|' + segs.map(function (s) { return s.id; }).join(',');
+    $('edReset').disabled = !data.paper.edit; $('pSaveBank').classList.toggle('hidden', !data.paper.edit);
+    $('edState').textContent = data.paper.edit ? 'Edited ✓ (saved)' : 'Saved';
     changed();
   }
   function restoreSel() {
@@ -1969,19 +2027,19 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   // ---------- paper edits -> question bank ----------
   function runsText(rs) { return (rs || []).map(function (r) { return r.t; }).join(''); }
   function editsToBank(mode) {
-    var p = data.paper, body = p.edit && p.edit.body; if (!body) return;
-    var segs = [], cur = null;
-    body.forEach(function (b) {
-      if (b.k === 'h') { cur = { lines: [runsText(b.l).replace(/^\s*Q\d+\.\s*/, 'Q1. ') + '  ' + runsText(b.r)], cut: false }; segs.push(cur); return; }
-      if (!cur || cur.cut) return;
-      if (b.k === 'p' && /^Use the following information for Question/i.test(runsText(b.runs))) { cur.cut = true; return; } // next question's shared data
-      if (b.k === 't') (b.rows || []).forEach(function (r) { cur.lines.push(r.join(' | ')); });
-      else cur.lines.push(runsText(b.runs));
-    });
-    var qs = p.questionIds.map(question).filter(Boolean), updated = 0, created = 0;
-    segs.forEach(function (sg, i) {
-      var orig = qs[i]; if (!orig) return;
-      var c = course(orig.courseId), r = window.QBPaste.parse(sg.lines.join('\n'), { defaultMarks: 1, sharedMode: 'none' });
+    var p = data.paper; if (!p.edit) return;
+    var m = paperModel(), segs = assemble(m), updated = 0, created = 0, keepEdits = {};
+    segs.forEach(function (sg) {
+      if (!sg.edited) return;
+      var orig = question(sg.id); if (!orig) return;
+      var lines = [], started = false;
+      sg.blocks.forEach(function (b) {
+        if (b.k === 'h') { started = true; lines.push(runsText(b.l).replace(/^\s*Q\d+\.\s*/, 'Q1. ') + '  ' + runsText(b.r)); return; }
+        if (!started) return;                                   // shared data printed before the heading stays as it is
+        if (b.k === 't') (b.rows || []).forEach(function (r) { lines.push(r.join(' | ')); });
+        else lines.push(runsText(b.runs));
+      });
+      var c = course(orig.courseId), r = window.QBPaste.parse(lines.join('\n'), { defaultMarks: 1, sharedMode: 'none' });
       if (!r.questions.length) return;
       var pq = fromPasted({ questions: [r.questions[0]] }, c, orig.qtype).qs[0];
       var nq = Object.assign({}, orig, { title: pq.title, stem: pq.stem, parts: pq.parts, marks: pq.marks,
@@ -1989,10 +2047,13 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       if (mode === 'new') {
         nq = S.cleanQuestion(Object.assign(nq, { id: '', createdAt: '' }));
         data.questions.unshift(nq); p.questionIds[p.questionIds.indexOf(orig.id)] = nq.id; created++;
-      } else { data.questions[data.questions.indexOf(orig)] = S.cleanQuestion(nq); updated++; }
+        keepEdits[nq.id] = sg.blocks;
+      } else { data.questions[data.questions.indexOf(orig)] = S.cleanQuestion(nq); updated++; keepEdits[orig.id] = sg.blocks; }
     });
-    // the paper now matches the bank again: keep the formatting edits, refresh the link
-    p.edit.sig = hashStr(JSON.stringify(baseBody(paperModel()))); edKey = '';
+    // the bank now matches the paper: keep the formatted text, linked to the updated questions
+    var fresh = baseSegs(paperModel()), ed = {};
+    fresh.forEach(function (s) { if (keepEdits[s.id]) ed[s.id] = { sig: segSig(s), body: keepEdits[s.id] }; else if (p.edit.segs[s.id]) ed[s.id] = p.edit.segs[s.id]; });
+    p.edit = Object.keys(ed).length ? { segs: ed } : null; edKey = '';
     changed(); renderPaperLists();
     toast(mode === 'new' ? created + ' new question(s) saved in the bank and used on this paper.' : updated + ' question(s) updated in the bank.');
   }
@@ -2101,7 +2162,8 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     return n.replace(/[<>:"\/\\|?*\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150) || 'Paper';
   }
   async function downloadPaper() {
-    var m = paperModel();
+    if (edTimer) { clearTimeout(edTimer); edTimer = null; saveEdit(); }   // include the very last keystrokes
+    var m = finishModel(paperModel());
     if (!m.questions.length) return toast('Add at least one question to the paper.', 'err');
     var noClo = paperQuestions().filter(function (q) { return !q.clos.length; }).length;
     if (noClo && !confirm(noClo + ' question(s) have no CLO. Download anyway?')) return;
@@ -2558,7 +2620,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
   async function exportJson() {
     S.download(new Blob([JSON.stringify(S.exportable(data), null, 2)], { type: 'application/json' }), 'question-bank-export_' + S.stamp() + '.json');
-    toast('Exported ' + data.questions.length + ' questions.');
+    toast('Exported ' + data.courses.length + ' course(s), ' + data.questions.length + ' question(s) and ' + data.papers.length + ' paper(s).');
   }
   async function importJson(file) {
     if (!file) return;
@@ -2572,7 +2634,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     }
     if (!obj || typeof obj !== 'object' || !Array.isArray(obj.courses) || !Array.isArray(obj.questions)) return toast('This file is not a question bank export.', 'err');
     var inc = S.cleanData(obj);
-    $('iInfo').textContent = 'File contains ' + inc.courses.length + ' course(s) and ' + inc.questions.length + ' question(s).';
+    $('iInfo').textContent = 'File contains ' + inc.courses.length + ' course(s), ' + inc.questions.length + ' question(s)' + (inc.papers.length ? ' and ' + inc.papers.length + ' saved paper(s)' : '') + '.';
     var dlg = $('iDlg'); dlg.returnValue = ''; dlg.showModal();
     dlg.addEventListener('close', function f() {
       dlg.removeEventListener('close', f);
@@ -2580,32 +2642,63 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       var mode = document.querySelector('input[name=imode]:checked').value;
       if (mode === 'replace') {
         if (!confirm('Replace ALL current courses and questions on this PC?')) return;
-        data.courses = inc.courses; data.questions = inc.questions; data.paper.questionIds = []; data.paper.courseId = '';
+        data.courses = inc.courses; data.questions = inc.questions; data.papers = inc.papers || [];
+        data.paper = inc.paper && inc.paper.questionIds && inc.paper.questionIds.length ? inc.paper : S.cleanPaper({ id: S.newId() }); edKey = '';
         toast('Bank replaced: ' + inc.courses.length + ' courses, ' + inc.questions.length + ' questions.');
       } else toast(merge(inc));
       changed(); render();
     });
   }
+  // Merge an imported bank into this one. Courses are matched by id or code; CLOs and PLOs by id or label;
+  // questions by id (the newer version wins); topics, outlines and saved papers are added when missing.
   function merge(inc) {
-    var addedC = 0, addedQ = 0, updQ = 0, cmap = {}, clomap = {};
+    var addedC = 0, addedQ = 0, updQ = 0, addedP = 0, cmap = {}, clomap = {}, plomap = {};
+    function mapList(exList, incList, map) {
+      (incList || []).forEach(function (x) {
+        var m = exList.find(function (y) { return y.id === x.id; }) || exList.find(function (y) { return y.label.toLowerCase() === x.label.toLowerCase(); });
+        if (!m) { m = { id: exList.some(function (y) { return y.id === x.id; }) ? S.newId() : x.id, label: x.label, desc: x.desc }; if (x.plos) m.plos = x.plos.slice(); exList.push(m); }
+        else if (!m.desc && x.desc) m.desc = x.desc;
+        map[x.id] = m.id;
+      });
+    }
     inc.courses.forEach(function (ic) {
       var ex = data.courses.find(function (c) { return c.id === ic.id; }) || data.courses.find(function (c) { return c.code.toLowerCase() === ic.code.toLowerCase(); });
-      if (!ex) { data.courses.push(ic); addedC++; cmap[ic.id] = ic.id; ic.clos.forEach(function (x) { clomap[x.id] = x.id; }); return; }
-      cmap[ic.id] = ex.id;
+      if (!ex) {
+        data.courses.push(ic); addedC++; cmap[ic.id] = ic.id;
+        ic.clos.forEach(function (x) { clomap[x.id] = x.id; }); (ic.plos || []).forEach(function (x) { plomap[x.id] = x.id; });
+        return;
+      }
+      cmap[ic.id] = ex.id; ex.plos = ex.plos || [];
+      mapList(ex.plos, ic.plos, plomap);
+      mapList(ex.clos, ic.clos, clomap);
+      // CLO -> PLO links
       ic.clos.forEach(function (x) {
-        var m = ex.clos.find(function (y) { return y.id === x.id; }) || ex.clos.find(function (y) { return y.label.toLowerCase() === x.label.toLowerCase(); });
-        if (!m) { m = { id: ex.clos.some(function (y) { return y.id === x.id; }) ? S.newId() : x.id, label: x.label, desc: x.desc }; ex.clos.push(m); }
-        else if (!m.desc && x.desc) m.desc = x.desc;
-        clomap[x.id] = m.id;
+        var m = ex.clos.find(function (y) { return y.id === clomap[x.id]; });
+        if (m && (!m.plos || !m.plos.length) && x.plos && x.plos.length) m.plos = x.plos.map(function (id) { return plomap[id]; }).filter(Boolean);
       });
+      // topics + outline
+      (ic.topics || []).forEach(function (t) {
+        if (ex.topics.some(function (y) { return y.title.toLowerCase() === t.title.toLowerCase(); })) return;
+        ex.topics.push({ id: S.newId(), week: t.week, title: t.title, clos: t.clos.map(function (id) { return clomap[id]; }).filter(Boolean) });
+      });
+      if (!ex.outline && ic.outline) ex.outline = ic.outline;
     });
     inc.questions.forEach(function (q) {
-      q.courseId = cmap[q.courseId]; q.clos = q.clos.map(function (id) { return clomap[id]; }).filter(Boolean);
+      q.courseId = cmap[q.courseId];
+      q.clos = q.clos.map(function (id) { return clomap[id] || id; });
+      q.plos = (q.plos || []).map(function (id) { return plomap[id] || id; });
+      var c = course(q.courseId);
+      if (c) { q.clos = q.clos.filter(function (id) { return c.clos.some(function (x) { return x.id === id; }); }); q.plos = q.plos.filter(function (id) { return (c.plos || []).some(function (x) { return x.id === id; }); }); }
       var ex = question(q.id);
       if (!ex) { data.questions.push(q); addedQ++; }
       else if ((q.updatedAt || '') > (ex.updatedAt || '')) { data.questions[data.questions.indexOf(ex)] = q; updQ++; }
     });
-    return 'Merged: ' + addedC + ' new course(s), ' + addedQ + ' new question(s), ' + updQ + ' updated.';
+    (inc.papers || []).forEach(function (pp) {
+      if (data.papers.some(function (x) { return x.id === pp.id; })) return;
+      pp.paper.courseId = cmap[pp.paper.courseId] || pp.paper.courseId;
+      data.papers.push(pp); addedP++;
+    });
+    return 'Merged: ' + addedC + ' new course(s), ' + addedQ + ' new question(s), ' + updQ + ' updated' + (addedP ? ', ' + addedP + ' paper(s)' : '') + '.';
   }
   async function setPassword() {
     var a = $('pw1').value, b = $('pw2').value;
@@ -2795,7 +2888,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var rebuild = function () { if (data.paper.edit && !confirm('Rebuild the paper from the questions? Your text edits and formatting will be replaced.')) return; data.paper.edit = null; edKey = ''; changed(); renderPaperLists(); };
     $('edReset').addEventListener('click', rebuild);
     $('edRebuild').addEventListener('click', function () { data.paper.edit = null; edKey = ''; changed(); renderPaperLists(); });
-    $('edKeep').addEventListener('click', function () { var m = paperModel(); data.paper.edit.sig = hashStr(JSON.stringify(baseBody(m))); edKey = ''; changed(); renderPaperLists(); });
+    $('edKeep').addEventListener('click', function () { $('edStale').classList.add('hidden'); });
     $('pNewQ').addEventListener('click', function () {
       if (!data.paper.courseId && data.courses[0]) data.paper.courseId = data.courses[0].id;
       addToPaperAfterSave = true; openQuestion(null, { courseId: data.paper.courseId });
