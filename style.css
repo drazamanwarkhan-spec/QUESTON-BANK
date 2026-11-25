@@ -234,3 +234,22 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .pv-table.nolines th { background: none; border-bottom: 0; }
 .small-inline { margin-top: 6px; margin-bottom: 0; }
 .small-inline select, .data-box .field.inline select { width: auto; }
+
+.edbar { position: sticky; top: 64px; z-index: 3; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; margin: 0 auto 10px; max-width: 850px; box-shadow: var(--shadow); }
+.edbar select { width: auto; padding: 5px 6px; font-size: 13px; }
+.edbar #edFont { min-width: 150px; }
+.edb { font: inherit; min-width: 32px; height: 32px; border: 1px solid transparent; border-radius: 6px; background: none; cursor: pointer; font-size: 14px; color: var(--ink); }
+.edb:hover { background: var(--bg); border-color: var(--line); }
+.edsep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+.pv-edit { outline: none; font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 1.25; color: #000; min-height: 200px; border-radius: 4px; }
+.pv-edit:focus { box-shadow: 0 0 0 2px #f3d5c7; }
+.pv-edit .pb { margin: 0; min-height: 1.25em; }
+.pv-edit .qh { display: flex; justify-content: space-between; gap: 24px; margin: 0; }
+.pv-edit .qh .r { text-align: right; white-space: nowrap; }
+.pv-edit table { margin: 6px auto; }
+.pv-edit td, .pv-edit th { font-size: 10pt; }
+
+.qdata-same { font-size: 12.5px; color: #3b3f9c; margin: 6px 0; background: #eef0fb; padding: 5px 10px; border-radius: 8px; }
+.pv-head { position: relative; display: block; text-align: center; min-height: 80px; }
+.pv-head .pv-logo { position: absolute; left: 0; top: 0; }
+.pv-head .pv-dept, .pv-head .pv-exam, .pv-head .pv-uni { text-align: center; }

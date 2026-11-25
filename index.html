@@ -162,7 +162,36 @@
       <div id="rgMsg" class="small"></div>
     </div>
     <div class="card">
-      <h2>Preview</h2>
+      <h2>Paper — click in the questions to edit</h2>
+      <p class="small muted">Type directly on the paper. Select text, then use the toolbar for font, size, bold, italic, underline and alignment. What you see here is what you get in the Word file. The letterhead and the details at the top come from the Paper details form.</p>
+      <div id="edBar" class="edbar" role="toolbar" aria-label="Formatting">
+        <select id="edFont" title="Font" aria-label="Font">
+          <option>Times New Roman</option><option>Calibri</option><option>Arial</option><option>Cambria</option><option>Georgia</option>
+          <option>Garamond</option><option>Book Antiqua</option><option>Century Gothic</option><option>Tahoma</option><option>Verdana</option>
+        </select>
+        <select id="edSize" title="Font size" aria-label="Font size">
+          <option>8</option><option>9</option><option>10</option><option>10.5</option><option>11</option><option selected>12</option><option>13</option><option>14</option><option>16</option><option>18</option><option>20</option><option>24</option><option>28</option>
+        </select>
+        <span class="edsep"></span>
+        <button type="button" class="edb" data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+        <button type="button" class="edb" data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+        <button type="button" class="edb" data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+        <span class="edsep"></span>
+        <button type="button" class="edb" data-cmd="justifyLeft" title="Align left">⯇≡</button>
+        <button type="button" class="edb" data-cmd="justifyCenter" title="Center">≡</button>
+        <button type="button" class="edb" data-cmd="justifyRight" title="Align right">≡⯈</button>
+        <button type="button" class="edb" data-cmd="justifyFull" title="Justify">☰</button>
+        <span class="edsep"></span>
+        <button type="button" class="edb" data-cmd="undo" title="Undo (Ctrl+Z)">↶</button>
+        <button type="button" class="edb" data-cmd="redo" title="Redo (Ctrl+Y)">↷</button>
+        <span class="spacer"></span>
+        <span id="edState" class="small muted"></span>
+        <button type="button" id="edReset" class="btn small ghost" title="Throw away edits and rebuild the paper from the questions">↺ Rebuild from questions</button>
+      </div>
+      <div id="edStale" class="back-banner hidden">
+        <div><b>You changed the questions after editing the paper.</b> Rebuild it to include the changes (your text edits will be replaced), or keep your edited version.</div>
+        <div class="ai-actions tight"><button type="button" id="edRebuild" class="btn primary small">Rebuild paper</button><button type="button" id="edKeep" class="btn small">Keep my edited version</button></div>
+      </div>
       <div id="preview" class="preview"></div>
     </div>
   </section>
