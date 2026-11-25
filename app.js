@@ -1626,6 +1626,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     if (!course(p.courseId) && data.courses.length) p.courseId = data.courses[0].id;
     fillCourseSelect($('pCourse'), p.courseId);
     var c = course(p.courseId) || { code: '', title: '' };
+    $('pCourseAsk').classList.add('hidden');
     $('pDept').value = p.department || (data.settings.deptPrefix + data.settings.department); $('pUni').value = p.university || data.settings.university;
     $('pCode').value = p.courseCode || c.code; $('pTitle').value = p.courseTitle || c.title;
     $('pExam').value = p.exam; $('pSeason').value = p.season; $('pClass').value = p.classSection; $('pInstructor').value = p.instructor;
@@ -1996,6 +1997,43 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     toast(mode === 'new' ? created + ' new question(s) saved in the bank and used on this paper.' : updated + ' question(s) updated in the bank.');
   }
 
+  // ---------- course code / name typed in Paper Builder ----------
+  function courseTyped() {
+    var p = data.paper, code = $('pCode').value.trim(), title = $('pTitle').value.trim(), cur = course(p.courseId), box = $('pCourseAsk');
+    if (!code) { box.classList.add('hidden'); return; }
+    var match = data.courses.find(function (c) { return c.code.toLowerCase() === code.toLowerCase(); });
+    if (match && match !== cur) {                       // an existing course: just switch to it
+      if (p.questionIds.length && !confirm('Switch this paper to ' + match.code + ' \u2014 ' + match.title + '? The questions now on the paper will be removed from it (they stay in the bank).')) return;
+      p.courseId = match.id; p.questionIds = []; p.courseCode = ''; p.courseTitle = title && title !== match.title ? title : '';
+      box.classList.add('hidden'); changed(); renderPaper(); toast('Course changed to ' + match.code + '.'); return;
+    }
+    if (match === cur && cur && (!title || title === cur.title)) { p.courseCode = ''; p.courseTitle = ''; box.classList.add('hidden'); changed(); return; }
+    if (match === cur && cur) {                         // same code, new name
+      $('pCourseAskText').textContent = 'Change the name of ' + cur.code + ' from \u201c' + cur.title + '\u201d to \u201c' + title + '\u201d everywhere?';
+      $('pcRename').textContent = 'Yes, rename the course'; $('pcAdd').classList.add('hidden');
+    } else {
+      $('pCourseAskText').textContent = '\u201c' + code + (title ? ' \u2014 ' + title : '') + '\u201d is not in your course list.' + (cur ? ' The selected course is ' + cur.code + ' \u2014 ' + cur.title + '.' : '');
+      $('pcRename').textContent = cur ? 'Rename ' + cur.code + ' to this' : 'Add as a new course';
+      $('pcAdd').classList.toggle('hidden', !cur);
+    }
+    box.classList.remove('hidden');
+  }
+  function courseRename() {
+    var p = data.paper, cur = course(p.courseId), code = $('pCode').value.trim(), title = $('pTitle').value.trim();
+    if (!cur) return courseAddNew();
+    if (data.courses.some(function (c) { return c !== cur && c.code.toLowerCase() === code.toLowerCase(); })) return toast('Another course already uses this code.', 'err');
+    cur.code = code.slice(0, 40); if (title) cur.title = title.slice(0, 200);
+    p.courseCode = ''; p.courseTitle = ''; $('pCourseAsk').classList.add('hidden');
+    changed(); renderPaper(); toast('Course renamed to ' + cur.code + ' \u2014 ' + cur.title + '.');
+  }
+  function courseAddNew() {
+    var p = data.paper, code = $('pCode').value.trim(), title = $('pTitle').value.trim() || code;
+    var c = S.cleanCourse({ code: code, title: title, clos: [] });
+    data.courses.push(c); p.courseId = c.id; p.courseCode = ''; p.courseTitle = '';
+    $('pCourseAsk').classList.add('hidden'); changed(); renderPaper();
+    toast('New course ' + c.code + ' added. Add its CLOs (or upload its outline) in Courses & CLOs.');
+  }
+
   // ---------- several papers ----------
   function paperName(p) {
     var c = course(p.courseId);
@@ -2050,6 +2088,18 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
   function showMyPapers() { renderMyPapers(); $('mpDlg').showModal(); }
 
+  // "FIN-410 Risk Management - Fall 2026 Midterm Exam (Set A)"
+  function examLabel(exam) {
+    var e = String(exam || '').trim();
+    if (/mid/i.test(e)) return 'Midterm Exam';
+    if (/final|terminal/i.test(e)) return 'Final Term Exam';
+    return e ? e.replace(/\s*Semester\s*/i, ' ').replace(/Examinations?/i, 'Exam').replace(/\s+/g, ' ').trim() : 'Exam';
+  }
+  function paperFileName(code, title, setLabel) {
+    var p = data.paper;
+    var n = [code, title].filter(Boolean).join(' ') + ' - ' + p.season + ' ' + p.year + ' ' + examLabel(p.exam) + (setLabel ? ' (' + setLabel + ')' : '');
+    return n.replace(/[<>:"\/\\|?*\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150) || 'Paper';
+  }
   async function downloadPaper() {
     var m = paperModel();
     if (!m.questions.length) return toast('Add at least one question to the paper.', 'err');
@@ -2057,8 +2107,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     if (noClo && !confirm(noClo + ' question(s) have no CLO. Download anyway?')) return;
     try {
       var blob = await D.buildPaper(m);
-      var name = (m.courseCode || 'Paper') + '_' + (data.paper.exam || 'Exam').split(' ')[0] + '_' + data.paper.season + data.paper.year + '.docx';
-      S.download(blob, name.replace(/[^A-Za-z0-9._-]+/g, '_'));
+      S.download(blob, paperFileName(m.courseCode, m.courseTitle, '') + '.docx');
       savePaperToList(); $('afterDl').classList.remove('hidden'); $('afterDl').scrollIntoView({ behavior: 'smooth', block: 'center' });
       toast('Paper downloaded and saved in My papers.');
     } catch (e) { toast('Could not create the Word file: ' + e.message, 'err'); }
@@ -2196,16 +2245,16 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     showSetSummary(res);
     var btn = $('rgDownload'); btn.disabled = true; btn.textContent = 'Generating…';
     try {
-      var p = data.paper, base = ((res.course.code || 'Paper') + '_' + (p.exam || 'Exam').split(' ')[0] + '_' + p.season + p.year).replace(/[^A-Za-z0-9._-]+/g, '_');
+      var mm = paperModel(), base = paperFileName(mm.courseCode, mm.courseTitle, '');
       if (res.sets.length === 1) {
-        S.download(await D.buildPaper(paperModel(res.sets[0].qs, '')), base + '_random.docx');
+        S.download(await D.buildPaper(paperModel(res.sets[0].qs, '')), base + ' (random).docx');
       } else {
         var zip = new JSZip();
         for (var i = 0; i < res.sets.length; i++) {
           var r = res.sets[i];
-          zip.file(base + '_' + r.label.replace(' ', '') + '.docx', await D.buildPaper(paperModel(r.qs, r.label)));
+          zip.file(paperFileName(mm.courseCode, mm.courseTitle, r.label) + '.docx', await D.buildPaper(paperModel(r.qs, r.label)));
         }
-        S.download(await zip.generateAsync({ type: 'blob' }), base + '_' + res.sets.length + '_sets.zip');
+        S.download(await zip.generateAsync({ type: 'blob' }), base + ' (' + res.sets.length + ' sets).zip');
       }
       toast(res.sets.length > 1 ? res.sets.length + ' papers downloaded in one .zip file.' : 'Random paper downloaded.');
     } catch (e) { toast('Could not create the papers: ' + e.message, 'err'); }
@@ -2772,6 +2821,10 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     ['topPapers', 'myPapers'].forEach(function (id) { $(id).addEventListener('click', showMyPapers); });
     $('mpClose').addEventListener('click', function () { $('mpDlg').close(); });
     $('dlStay').addEventListener('click', function () { $('afterDl').classList.add('hidden'); });
+    ['pCode', 'pTitle'].forEach(function (id) { $(id).addEventListener('change', courseTyped); });
+    $('pcRename').addEventListener('click', courseRename);
+    $('pcAdd').addEventListener('click', courseAddNew);
+    $('pcOnly').addEventListener('click', function () { $('pCourseAsk').classList.add('hidden'); });
     $('pTpl').addEventListener('click', function () { $('tplFile').value = ''; $('tplFile').click(); });
     $('pSearch').addEventListener('input', renderPaperLists);
     $('pDownload').addEventListener('click', downloadPaper);
