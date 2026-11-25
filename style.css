@@ -168,3 +168,10 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .pv-table { border-collapse: collapse; margin: 8px auto; font-size: 13.5px; }
 .pv-table th, .pv-table td { border: 1px solid #333; padding: 3px 10px; text-align: left; }
 .pv-table th { background: #d9d9d9; }
+
+.date-wrap { display: flex; gap: 6px; }
+.date-wrap input { flex: 1; cursor: pointer; }
+.btn.cal { padding: 6px 10px; font-size: 16px; }
+.parts-quick { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.dlg-actions .spacer { flex: 1; }
+.set-sum { margin: 6px 0; padding: 8px 10px; background: #f9f8f5; border-radius: 8px; }

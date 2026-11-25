@@ -603,6 +603,119 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
 })();
 
 ;
+/* Reads questions pasted as plain text (from Word, PDF, WhatsApp, etc.) and turns them into
+ * structured questions: heading, statement, parts (a)(b)..., marks and CLOs. No AI, runs locally. */
+(function () {
+  'use strict';
+
+  var RE_Q = /^\s*(?:Q(?:uestion)?\s*(?:No\.?|#)?\s*[-.]?\s*(\d{1,3})\s*[.:)\-–]?\s*|(\d{1,3})\s*[.)]\s+)(.*)$/i;
+  var RE_QSTYLE = /^\s*Q(?:uestion)?\s*(?:No\.?|#)?\s*[-.]?\s*\d{1,3}\b/i;
+  var RE_PART = /^\s*(?:part\s*)?(?:\(\s*([a-z]|[ivx]{1,4})\s*\)|([a-z]|[ivx]{2,4})\s*[.)]\s)\s*(.*)$/i;
+  var RE_NUMPART = /^\s*(?:\(\s*(\d{1,2})\s*\)|(\d{1,2})\s*[.)])\s+(.*)$/;
+  var RE_ANS = /^\s*(?:ans(?:wer)?|solution|answer\s*key|key)\s*[:.\-–]\s*(.*)$/i;
+  var RE_SKIP = /^\s*(?:\(?\s*or\s*\)?|section\s+[a-z0-9]+\s*[:.\-]?.*|part\s+[ivx0-9]+\s*[:.\-]?\s*|attempt\s+(?:any|all).*|note\s*[:.].*)\s*$/i;
+  var RE_CLO = /\bCLOs?\s*[-:#]?\s*(\d{1,2}(?:\s*(?:,|&|and|\/)\s*(?:CLO\s*[-:#]?\s*)?\d{1,2})*)/gi;
+  var MARK_PATTERNS = [
+    /[\(\[]\s*(\d+(?:\.\d+)?)\s*(?:marks?|mks?|mrks?|pts?|points?|m)\s*[\)\]]/i,
+    /\bmarks?\s*[:=\-]\s*(\d+(?:\.\d+)?)/i,
+    /(?:^|\s)(\d+(?:\.\d+)?)\s*(?:marks?|mks?)\b\.?/i,
+    /[\(\[]\s*(\d+(?:\.\d+)?)\s*[\)\]]\s*$/
+  ];
+
+  function extract(s) {
+    var clos = [], marks = null;
+    s = s.replace(RE_CLO, function (m, nums) { (nums.match(/\d+/g) || []).forEach(function (n) { clos.push(Number(n)); }); return ' '; });
+    for (var i = 0; i < MARK_PATTERNS.length; i++) {
+      var m = MARK_PATTERNS[i].exec(s);
+      if (m) { marks = Number(m[1]); s = s.slice(0, m.index) + ' ' + s.slice(m.index + m[0].length); break; }
+    }
+    s = s.replace(/\s{2,}/g, ' ').replace(/[\s,;:|\-–]+$/, '').replace(/^[\s,;:|\-–]+/, '').trim();
+    return { text: s, marks: marks, clos: clos };
+  }
+
+  function round(n) { return Math.round(n * 2) / 2; }
+
+  function parse(text, opts) {
+    opts = opts || {};
+    var def = Number(opts.defaultMarks) > 0 ? Number(opts.defaultMarks) : 1;
+    var lines = String(text || '').replace(/\r\n?/g, '\n').replace(/ /g, ' ').replace(/[•●▪]\s*/g, '').split('\n');
+    var qStyle = lines.some(function (l) { return RE_QSTYLE.test(l); });
+    var hasNumbered = qStyle || lines.some(function (l) { return RE_Q.test(l); });
+    var out = [], cur = null, part = null, mode = 'stem', ignored = 0;
+
+    function newQ(headText) {
+      var e = extract(headText || '');
+      cur = { head: e.text, headMarks: e.marks, clos: e.clos.slice(), stem: [], parts: [], answer: [] };
+      out.push(cur); part = null; mode = 'stem';
+    }
+
+    if (!hasNumbered) {
+      // No "Q1"/"1." markers: every block separated by a blank line is one question.
+      String(text || '').replace(/\r\n?/g, '\n').split(/\n\s*\n/).forEach(function (blk) {
+        var t = blk.trim(); if (!t) return;
+        var sub = parse('Q1. ' + t, opts).questions[0];
+        if (sub) out.push(sub);
+      });
+      return { questions: out, ignored: 0 };
+    }
+
+    lines.forEach(function (raw) {
+      var line = raw.replace(/\t+/g, ' ').trimEnd();
+      if (!line.trim()) { if (part) part.text.push(''); else if (cur && mode === 'stem') cur.stem.push(''); return; }
+      var m;
+      if ((qStyle ? RE_QSTYLE.test(line) : true) && (m = RE_Q.exec(line))) { newQ(m[3]); return; }
+      if (!cur) { ignored++; return; }
+      if ((m = RE_ANS.exec(line))) { mode = 'answer'; part = null; if (m[1]) cur.answer.push(m[1]); return; }
+      if (RE_SKIP.test(line) && line.trim().length < 60) return;
+      if ((m = RE_PART.exec(line)) || (qStyle && (m = RE_NUMPART.exec(line)))) {
+        var e = extract(m[3] || '');
+        part = { text: [e.text], marks: e.marks }; cur.parts.push(part); mode = 'part';
+        e.clos.forEach(function (c) { cur.clos.push(c); });
+        return;
+      }
+      if (mode === 'answer') { cur.answer.push(line.trim()); return; }
+      var e2 = extract(line.trim());
+      e2.clos.forEach(function (c) { cur.clos.push(c); });
+      if (part) {
+        part.text.push(e2.text);
+        if (e2.marks != null && part.marks == null) part.marks = e2.marks;
+      } else {
+        if (e2.marks != null && cur.headMarks == null && !cur.parts.length) cur.headMarks = e2.marks;
+        if (e2.text) cur.stem.push(e2.text);
+      }
+    });
+
+    var qs = out.map(function (q) {
+      if (q.final) return q;
+      var stem = q.stem.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+      var parts = q.parts.map(function (p) { return { text: p.text.join('\n').replace(/\n{2,}/g, '\n').trim(), marks: p.marks }; })
+        .filter(function (p) { return p.text; });
+      var title = '', head = q.head || '';
+      if (head && (head.length > 90 || /\?\s*$/.test(head) || (!parts.length && !stem))) { stem = head + (stem ? '\n' + stem : ''); }
+      else title = head;
+      // marks: fill the gaps
+      if (parts.length) {
+        var known = 0, unknown = 0;
+        parts.forEach(function (p) { if (p.marks != null) known += p.marks; else unknown++; });
+        if (unknown) {
+          var each = q.headMarks != null && q.headMarks > known ? round((q.headMarks - known) / unknown) || def : def;
+          parts.forEach(function (p) { if (p.marks == null) p.marks = each; });
+        }
+      }
+      return {
+        final: true, title: title, stem: stem, parts: parts,
+        marks: parts.length ? 0 : (q.headMarks != null ? q.headMarks : def),
+        cloNums: Array.from(new Set(q.clos)).sort(function (a, b) { return a - b; }),
+        answer: q.answer.join('\n').trim()
+      };
+    }).filter(function (q) { return q.title || q.stem || q.parts.length; });
+    return { questions: qs, ignored: ignored };
+  }
+
+  window.QBPaste = { parse: parse };
+})();
+
+;
 /* UI. All user / imported / AI text is inserted with textContent only (no innerHTML anywhere). */
 (function () {
   'use strict';
@@ -938,7 +1051,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('pTimeCustom').classList.toggle('hidden', known); $('pTimeCustom').value = known ? '' : p.timeAllowed;
     $('pStart').value = p.examTime; $('pDate').value = p.date; $('pMax').value = p.maxMarksOverride; $('pInstr').value = p.instructions;
     $('pCloTable').checked = p.appendCloTable;
-    renderPaperLists();
+    renderPaperLists(); renderRG();
   }
   function renderPaperLists() {
     var p = data.paper, sel = clear($('pSelected')), qs = paperQuestions();
@@ -986,13 +1099,14 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var hh = Number(t.slice(0, 2)), mm = t.slice(3);
     return ((hh % 12) || 12) + ':' + mm + ' ' + (hh < 12 ? 'AM' : 'PM');
   }
-  function paperModel() {
-    var p = data.paper, c = course(p.courseId) || { code: '', title: '', clos: [] }, qs = paperQuestions();
+  function paperModel(qsOverride, setLabel) {
+    var p = data.paper, c = course(p.courseId) || { code: '', title: '', clos: [] }, qs = qsOverride || paperQuestions();
+    var sum = round(qs.reduce(function (a, q) { return a + total(q); }, 0));
     return {
       university: data.settings.university, deptPrefix: data.settings.deptPrefix, department: data.settings.department,
-      examTitle: [p.exam, p.season + ' ' + p.year].filter(function (x) { return x && x.trim(); }).join(' \u2013 '),
+      examTitle: [p.exam, p.season + ' ' + p.year].filter(function (x) { return x && x.trim(); }).join(' \u2013 ') + (setLabel ? ' (' + setLabel + ')' : ''),
       courseTitle: p.courseTitle || c.title, courseCode: p.courseCode || c.code, examTime: fmtTime(p.examTime), classSection: p.classSection, instructor: p.instructor, timeAllowed: p.timeAllowed,
-      date: p.date, maxMarks: p.maxMarksOverride === '' ? paperTotal() : p.maxMarksOverride, instructions: p.instructions,
+      date: p.date, maxMarks: p.maxMarksOverride === '' || qsOverride ? sum : p.maxMarksOverride, instructions: p.instructions,
       appendCloTable: p.appendCloTable, cloInfo: c.clos.map(function (x) { return { label: x.label, desc: x.desc }; }),
       questions: qs.map(function (q) { return { title: q.title, stem: q.stem, parts: q.parts, marks: q.marks, cloLabels: cloLabels(q) }; })
     };
@@ -1060,6 +1174,179 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       });
       S.download(blob, 'Question_Bank_' + (c ? c.code.replace(/[^A-Za-z0-9_-]+/g, '_') : 'All') + '_' + S.stamp() + '.docx');
     } catch (e) { toast('Could not create the Word file: ' + e.message, 'err'); }
+  }
+
+  // ---------- RANDOM PAPER GENERATOR ----------
+  var rgSel = { clos: [], course: '' };
+  function rnd(n) { var a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; }
+  function shuffle(arr) { var a = arr.slice(); for (var i = a.length - 1; i > 0; i--) { var j = rnd(i + 1), t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function rgPool() {
+    var p = data.paper, ty = $('rgType').value, df = $('rgDiff').value;
+    return data.questions.filter(function (q) {
+      if (q.courseId !== p.courseId) return false;
+      if (ty && q.qtype !== ty) return false;
+      if (df && q.difficulty !== df) return false;
+      if (rgSel.clos.length && !q.clos.some(function (id) { return rgSel.clos.indexOf(id) >= 0; })) return false;
+      return true;
+    });
+  }
+  function renderRG() {
+    var c = course(data.paper.courseId), box = clear($('rgClos'));
+    if (rgSel.course !== data.paper.courseId) { rgSel.course = data.paper.courseId; rgSel.clos = []; }
+    (c ? c.clos : []).forEach(function (x) {
+      var on = rgSel.clos.indexOf(x.id) >= 0;
+      box.append(h('button', { type: 'button', class: 'chip' + (on ? ' on' : ''), title: x.desc, text: x.label, onclick: function () {
+        if (on) rgSel.clos = rgSel.clos.filter(function (y) { return y !== x.id; }); else rgSel.clos.push(x.id); renderRG();
+      } }));
+    });
+    var pool = rgPool();
+    $('rgPool').textContent = pool.length + ' matching question(s) in the bank, ' + round(pool.reduce(function (a, q) { return a + total(q); }, 0)) + ' marks in total';
+  }
+  // Randomised search for a set that meets the count / marks / CLO targets as closely as possible.
+  function pickSet(pool, o) {
+    var best = null, need = o.cover ? o.clos.slice() : [];
+    for (var attempt = 0; attempt < 1500; attempt++) {
+      var sh = shuffle(pool), chosen = [], sum = 0, covered = {};
+      var fits = function (q) { return (!o.count || chosen.length < o.count) && (!o.target || sum + total(q) <= o.target + 1e-9); };
+      var add = function (q) { chosen.push(q); sum += total(q); q.clos.forEach(function (id) { covered[id] = 1; }); };
+      shuffle(need).forEach(function (cid) {
+        if (covered[cid]) return;
+        var q = sh.find(function (x) { return chosen.indexOf(x) < 0 && x.clos.indexOf(cid) >= 0 && fits(x); });
+        if (q) add(q);
+      });
+      for (var i = 0; i < sh.length; i++) {
+        var q = sh[i];
+        if (chosen.indexOf(q) >= 0) continue;
+        if (o.count && chosen.length >= o.count) break;
+        if (!o.count && o.target && sum >= o.target) break;
+        if (fits(q)) add(q);
+      }
+      var missing = need.filter(function (cid) { return !covered[cid]; }).length;
+      var score = (o.target ? Math.abs(o.target - sum) * 10 : 0) + (o.count ? Math.abs(o.count - chosen.length) * 20 : 0) + missing * 50;
+      if (!best || score < best.score) best = { qs: shuffle(chosen), sum: round(sum), score: score, missing: missing };
+      if (score === 0) break;
+    }
+    return best;
+  }
+  function makeSets() {
+    var c = course(data.paper.courseId);
+    if (!c) throw new Error('Choose a course in Paper details first.');
+    var o = {
+      count: Math.max(0, Math.min(50, Math.round(Number($('rgCount').value) || 0))),
+      target: Math.max(0, Number($('rgMarks').value) || 0),
+      clos: rgSel.clos.length ? rgSel.clos.slice() : c.clos.map(function (x) { return x.id; }),
+      cover: $('rgCover').checked
+    };
+    if (!o.count && !o.target) o.count = 4;
+    var nSets = Math.max(1, Math.min(10, Math.round(Number($('rgSets').value) || 1)));
+    var pool = rgPool();
+    if (!pool.length) throw new Error('No questions in the bank match these settings.');
+    // Only ask to cover CLOs that some question in the pool actually has
+    o.clos = o.clos.filter(function (cid) { return pool.some(function (q) { return q.clos.indexOf(cid) >= 0; }); });
+    var used = {}, sets = [], reused = false;
+    for (var s = 0; s < nSets; s++) {
+      var avail = $('rgUnique').checked ? pool.filter(function (q) { return !used[q.id]; }) : pool;
+      var r = avail.length ? pickSet(avail, o) : null;
+      if ($('rgUnique').checked && (!r || r.score > 0)) {
+        var r2 = pickSet(pool, o);
+        if (!r || r2.score < r.score) { r = r2; reused = true; }
+      }
+      r.qs.forEach(function (q) { used[q.id] = 1; });
+      r.label = nSets > 1 ? 'Set ' + String.fromCharCode(65 + s) : '';
+      sets.push(r);
+    }
+    return { sets: sets, o: o, reused: reused, course: c };
+  }
+  function showSetSummary(res) {
+    var box = clear($('rgMsg'));
+    res.sets.forEach(function (r) {
+      var cl = res.course.clos.filter(function (x) { return r.qs.some(function (q) { return q.clos.indexOf(x.id) >= 0; }); }).map(function (x) { return x.label; });
+      box.append(h('div', { class: 'set-sum' }, h('b', { text: (r.label || 'Paper') + ': ' }),
+        r.qs.length + ' questions · ' + r.sum + ' marks · ' + (cl.join(', ') || 'no CLOs'),
+        r.missing ? h('span', { class: 'err', text: ' · could not cover ' + r.missing + ' CLO(s)' }) : null,
+        res.o.target && r.sum !== res.o.target ? h('span', { class: 'err', text: ' · target was ' + res.o.target }) : null));
+    });
+    if (res.reused) box.append(h('p', { class: 'err', text: 'Not enough questions for completely different sets, so some questions repeat. Add more questions to the bank for fully unique sets.' }));
+  }
+  function rgFill() {
+    try {
+      var sb = $('rgSets').value; $('rgSets').value = 1;
+      var res = makeSets(); $('rgSets').value = sb;
+      data.paper.questionIds = res.sets[0].qs.map(function (q) { return q.id; });
+      changed(); renderPaperLists(); showSetSummary(res); toast('Paper filled with random questions. Edit or reorder them above if needed.');
+    } catch (e) { toast(e.message, 'err'); }
+  }
+  async function rgDownload() {
+    var res;
+    try { res = makeSets(); } catch (e) { return toast(e.message, 'err'); }
+    showSetSummary(res);
+    var btn = $('rgDownload'); btn.disabled = true; btn.textContent = 'Generating…';
+    try {
+      var p = data.paper, base = ((res.course.code || 'Paper') + '_' + (p.exam || 'Exam').split(' ')[0] + '_' + p.season + p.year).replace(/[^A-Za-z0-9._-]+/g, '_');
+      if (res.sets.length === 1) {
+        S.download(await D.buildPaper(paperModel(res.sets[0].qs, '')), base + '_random.docx');
+      } else {
+        var zip = new JSZip();
+        for (var i = 0; i < res.sets.length; i++) {
+          var r = res.sets[i];
+          zip.file(base + '_' + r.label.replace(' ', '') + '.docx', await D.buildPaper(paperModel(r.qs, r.label)));
+        }
+        S.download(await zip.generateAsync({ type: 'blob' }), base + '_' + res.sets.length + '_sets.zip');
+      }
+      toast(res.sets.length > 1 ? res.sets.length + ' papers downloaded in one .zip file.' : 'Random paper downloaded.');
+    } catch (e) { toast('Could not create the papers: ' + e.message, 'err'); }
+    btn.disabled = false; btn.textContent = 'Generate & download sets';
+  }
+
+  // ---------- PASTE QUESTIONS ----------
+  var psCandidates = [];
+  function openPaste() {
+    if (!data.courses.length) { toast('Add a course first.', 'err'); return showTab('courses'); }
+    fillCourseSelect($('psCourse'), filt.course || data.paper.courseId || data.courses[0].id);
+    psCandidates = []; renderPaste(); $('psMsg').textContent = '';
+    $('psDlg').showModal(); $('psText').focus();
+  }
+  function readPaste() {
+    var c = course($('psCourse').value), msg = $('psMsg');
+    if (!c) return;
+    var r = window.QBPaste.parse($('psText').value, { defaultMarks: $('psMarks').value });
+    var added = [];
+    psCandidates = r.questions.map(function (pq) {
+      var ids = pq.cloNums.map(function (n) {
+        var lab = 'CLO ' + n;
+        var x = c.clos.find(function (y) { return y.label.replace(/\s+/g, '').toUpperCase() === lab.replace(' ', ''); });
+        if (!x) { x = { id: S.newId(), label: lab, desc: '' }; c.clos.push(x); added.push(lab); }
+        return x.id;
+      });
+      return { on: true, q: S.cleanQuestion({ courseId: c.id, title: pq.title, stem: pq.stem, parts: pq.parts, marks: pq.marks, clos: ids, answer: pq.answer, qtype: $('psType').value }) };
+    });
+    if (added.length) { c.clos.sort(function (a, b) { return a.label.localeCompare(b.label, undefined, { numeric: true }); }); changed(); }
+    msg.className = 'small ' + (psCandidates.length ? 'ok' : 'err');
+    msg.textContent = psCandidates.length ? psCandidates.length + ' question(s) found' + (r.ignored ? ' (' + r.ignored + ' header line(s) skipped)' : '') +
+      (added.length ? '. New CLOs added to the course: ' + added.join(', ') + ' (add their descriptions in Courses & CLOs)' : '') + '. Check them, untick any you don\u2019t want, then click Add to bank.' : 'No questions found. Start each question with Q1., Q2. or 1., 2.';
+    renderPaste();
+  }
+  function renderPaste() {
+    var box = clear($('psResults'));
+    psCandidates.forEach(function (cand) {
+      var q = cand.q;
+      box.append(h('article', { class: 'qcard' + (cand.on ? '' : ' off') },
+        h('div', { class: 'qhead' }, h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: cand.on, onchange: function (e) { cand.on = e.target.checked; renderPaste(); } }), h('b', { text: ' ' + (q.title || '(no heading)') })), badges(q)),
+        questionBody(q)));
+    });
+    $('psAdd').disabled = !psCandidates.some(function (x) { return x.on; });
+  }
+  function addPaste() {
+    var picked = psCandidates.filter(function (x) { return x.on; }).map(function (x) { return x.q; });
+    if (!picked.length) return;
+    data.questions = picked.concat(data.questions);
+    if ($('psToPaper').checked) {
+      var cid = picked[0].courseId;
+      if (data.paper.courseId !== cid) { data.paper.courseId = cid; data.paper.questionIds = []; }
+      picked.forEach(function (q) { data.paper.questionIds.push(q.id); });
+    }
+    psCandidates = []; $('psText').value = ''; $('psDlg').close();
+    changed(); render(); toast(picked.length + ' question(s) added to the bank. Press Save to back up.');
   }
 
   // ---------- AI ----------
@@ -1289,6 +1576,26 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('fDiff').addEventListener('change', function (e) { filt.diff = e.target.value; renderBank(); });
     $('fSearch').addEventListener('input', function (e) { filt.q = e.target.value; renderBank(); });
     $('addQ').addEventListener('click', function () { openQuestion(null); });
+    $('pasteQ').addEventListener('click', openPaste);
+    $('psRead').addEventListener('click', readPaste);
+    $('psAdd').addEventListener('click', addPaste);
+    $('psCancel').addEventListener('click', function () { $('psDlg').close(); });
+    document.querySelectorAll('[data-np]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var n = Number(b.dataset.np);
+        var lost = draftParts.slice(n).filter(function (p) { return String(p.text).trim(); }).length;
+        if (lost && !confirm('This removes ' + lost + ' part(s) that already have text. Continue?')) return;
+        draftParts = draftParts.slice(0, n);
+        while (draftParts.length < n) draftParts.push({ text: '', marks: 1 });
+        renderQParts();
+      });
+    });
+    function openCal() { try { $('pDate').showPicker(); } catch (e) { $('pDate').focus(); } }
+    $('pDateBtn').addEventListener('click', openCal);
+    $('pDate').addEventListener('click', openCal);
+    ['rgType', 'rgDiff'].forEach(function (id) { $(id).addEventListener('change', renderRG); });
+    $('rgFill').addEventListener('click', rgFill);
+    $('rgDownload').addEventListener('click', rgDownload);
     $('bankReport').addEventListener('click', downloadBankReport);
 
     // question dialog

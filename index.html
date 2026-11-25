@@ -64,6 +64,7 @@
       <input id="fSearch" type="search" placeholder="Search questions…" aria-label="Search">
       <span class="spacer"></span>
       <button id="bankReport" class="btn">Download bank (.docx)</button>
+      <button id="pasteQ" class="btn">Paste questions</button>
       <button id="addQ" class="btn primary">+ Add question</button>
     </div>
     <p id="bankCount" class="muted small"></p>
@@ -153,7 +154,7 @@
           <div class="field"><label for="pInstructor">Course Instructor</label><input id="pInstructor" maxlength="120"></div>
         </div>
         <div class="row2">
-          <div class="field"><label for="pDate">Date of Exam</label><input id="pDate" type="date"></div>
+          <div class="field"><label for="pDate">Date of Exam</label><div class="date-wrap"><input id="pDate" type="date"><button type="button" id="pDateBtn" class="btn cal" title="Open calendar" aria-label="Open calendar">📅</button></div></div>
           <div class="field"><label for="pStart">Exam Time (optional)</label><input id="pStart" type="time"></div>
         </div>
         <div class="row2">
@@ -182,6 +183,28 @@
         <input id="pSearch" type="search" placeholder="Search this course's questions…">
         <div id="pAvailable" class="qlist compact"></div>
       </div>
+    </div>
+    <div class="card" id="rgCard">
+      <h2>Random paper generator</h2>
+      <p class="small muted">Builds papers automatically from this course's question bank, picking questions at random. Each set gets different questions, so you can make Set A, Set B and so on for different sections.</p>
+      <div class="row3">
+        <div class="field"><label for="rgCount">Number of questions</label><input id="rgCount" type="number" min="0" max="50" value="4"></div>
+        <div class="field"><label for="rgMarks">Total marks (target)</label><input id="rgMarks" type="number" min="0" step="0.5" placeholder="any"></div>
+        <div class="field"><label for="rgSets">Number of sets</label><input id="rgSets" type="number" min="1" max="10" value="1"></div>
+      </div>
+      <div class="row3">
+        <div class="field"><label for="rgType">Question type</label><select id="rgType"><option value="">Any</option><option>Theory</option><option>Numerical</option></select></div>
+        <div class="field"><label for="rgDiff">Difficulty</label><select id="rgDiff"><option value="">Any</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div>
+        <div class="field"><label>&nbsp;</label><span id="rgPool" class="small muted"></span></div>
+      </div>
+      <div class="field"><label>CLOs to include (none selected = all CLOs)</label><div id="rgClos" class="chips"></div></div>
+      <label class="check"><input id="rgCover" type="checkbox" checked> Cover every selected CLO at least once</label>
+      <label class="check"><input id="rgUnique" type="checkbox" checked> Different questions in each set (no repeats between sets)</label>
+      <div class="ai-actions">
+        <button id="rgFill" class="btn">Fill this paper randomly</button>
+        <button id="rgDownload" class="btn primary">Generate &amp; download sets</button>
+      </div>
+      <div id="rgMsg" class="small"></div>
     </div>
     <div class="card">
       <h2>Preview</h2>
@@ -277,7 +300,12 @@
       <div class="inline-add"><input id="qNewClo" maxlength="600" placeholder="Add a new CLO description to this course…"><button type="button" id="qAddClo" class="btn small">Add CLO</button></div></div>
     <div class="field"><label for="qStem">Statement / scenario / data (optional; lines with | become a table)</label>
       <textarea id="qStem" rows="3" maxlength="20000"></textarea></div>
-    <div class="field"><label>Parts</label><div id="qParts"></div>
+    <div class="field"><label>Parts</label>
+      <div class="parts-quick"><span class="small muted">Quick:</span>
+        <button type="button" class="chip" data-np="0">No parts</button><button type="button" class="chip" data-np="1">(a)</button>
+        <button type="button" class="chip" data-np="2">(a)–(b)</button><button type="button" class="chip" data-np="3">(a)–(c)</button>
+        <button type="button" class="chip" data-np="4">(a)–(d)</button><button type="button" class="chip" data-np="5">(a)–(e)</button></div>
+      <div id="qParts"></div>
       <button type="button" id="qAddPart" class="btn small">+ Add part</button></div>
     <div class="row3">
       <div class="field" id="qMarksWrap"><label for="qMarks">Marks (no parts)</label><input id="qMarks" type="number" min="0" step="0.5"></div>
@@ -325,6 +353,30 @@
     <p id="pwDlgText" class="small"></p>
     <input id="pwDlgInput" type="password" autocomplete="off">
     <div class="dlg-actions"><button value="cancel" class="btn ghost">Cancel</button><button value="ok" class="btn primary">OK</button></div>
+  </form>
+</dialog>
+
+<!-- Paste questions -->
+<dialog id="psDlg" class="dlg">
+  <form method="dialog" class="dlg-body">
+    <h2>Paste questions</h2>
+    <p class="small muted">Copy questions from Word, a PDF, an old paper or anywhere, and paste them below. Lines like
+      <b>Q1. Heading (4 marks) CLO 1</b>, <b>(a) … (2 marks)</b>, <b>1.</b>, <b>a)</b>, <b>[5 marks]</b> and <b>Answer: …</b> are recognised automatically.
+      Missing part marks are shared out from the question's marks.</p>
+    <div class="row3">
+      <div class="field"><label for="psCourse">Course</label><select id="psCourse"></select></div>
+      <div class="field"><label for="psMarks">Marks when none given</label><input id="psMarks" type="number" min="0.5" step="0.5" value="1"></div>
+      <div class="field"><label for="psType">Type</label><select id="psType"><option value="">—</option><option>Theory</option><option>Numerical</option></select></div>
+    </div>
+    <textarea id="psText" rows="10" maxlength="300000" placeholder="Q1. Availability &amp; Anchoring (4 marks) CLO 1, CLO 2&#10;(a) Define availability heuristic. (1 mark)&#10;(b) …"></textarea>
+    <div class="ai-actions"><button type="button" id="psRead" class="btn primary">Read questions</button><span id="psMsg" class="small"></span></div>
+    <div id="psResults" class="qlist"></div>
+    <div class="dlg-actions">
+      <label class="check small"><input id="psToPaper" type="checkbox"> Also add to current paper</label>
+      <span class="spacer"></span>
+      <button type="button" id="psCancel" class="btn ghost">Close</button>
+      <button type="button" id="psAdd" class="btn primary" disabled>Add to bank</button>
+    </div>
   </form>
 </dialog>
 
