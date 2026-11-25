@@ -500,40 +500,55 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   var API = 'https://generativelanguage.googleapis.com/v1beta/';
 
   function buildPrompt(o) {
-    // o: {course:{code,title,clos:[{label,desc}]}, cloLabels:[], count, marks, parts, difficulty, bloom, qtype, topic, notes, source}
-    var c = o.course;
+    // o: {course, cloLabels, count, marks, parts, difficulty, bloom, qtype, topic, notes, source, withAnswers, mine, mode, web}
+    var c = o.course, keep = o.mine && (o.mode === 'format' || o.mode === 'improve');
     var cloLines = (c.clos || []).filter(function (x) { return !o.cloLabels.length || o.cloLabels.indexOf(x.label) >= 0; })
       .map(function (x) { return '- ' + x.label + ': ' + (x.desc || '(no description)'); }).join('\n');
-    var lines = [
-      'You are an experienced university examiner. Write original exam questions.',
-      '',
-      'Course: ' + (c.title || '') + ' (' + (c.code || '') + ')',
-      'Course Learning Outcomes (CLOs) to assess:',
-      cloLines || '- (no CLOs defined)',
-      '',
-      'Requirements:',
-      '- Number of questions: ' + o.count,
-      '- Marks per question: ' + o.marks,
-      '- Sub-parts per question: ' + (o.parts > 0 ? o.parts + ' (labelled (a), (b), ...; their marks must add up to the question marks)' : 'none (single question)'),
-      '- Difficulty: ' + (o.difficulty || 'mixed'),
-      o.bloom ? '- Bloom\'s taxonomy level: ' + o.bloom : '',
-      o.qtype === 'Numerical' ? '- Question type: NUMERICAL problems. Give realistic figures/data in the stem (use plain-text tables with | separators if helpful), and make every part require a calculation with a definite numeric answer. Include units and currency where relevant.' :
-        o.qtype === 'Mixed' ? '- Question type: a MIX of numerical problems (with realistic data requiring calculations) and conceptual/theory questions. Set "qtype" to "Numerical" or "Theory" for each.' :
-        '- Question type: conceptual/theory (define, explain, discuss, compare, apply).',
-      o.style ? '- Question style: ' + o.style : '',
-      o.withAnswers ? '- In "answer", give a concise answer key / worked solution with final numeric results (this is for the teacher only).' : '- Leave "answer" empty.',
-      o.topic ? '- Topic(s): ' + o.topic : '',
-      o.notes ? '- Additional instructions: ' + o.notes : '',
-      '- Each question gets a short heading (3-7 words) like "Availability & Anchoring".',
-      '- Map every question to one or more of the CLO labels above, using the exact labels.',
-      '- Do NOT put answers, marking schemes or the marks text inside the question or part text.',
-      '- Use clear, formal academic English.',
-      o.source ? '\nBase the questions on this course material:\n"""\n' + o.source + '\n"""' : '',
-      '',
-      'Reply with ONLY valid JSON (no commentary, no markdown) in exactly this shape:',
-      '{"questions":[{"title":"Short heading","stem":"Optional scenario or instruction shown before the parts, or empty","clos":["CLO 1"],"topic":"topic","difficulty":"Easy|Medium|Hard","qtype":"Theory|Numerical","marks":' + o.marks + ',"parts":[{"text":"Part question text","marks":1}],"answer":""}]}'
-    ];
-    return lines.filter(function (l) { return l !== ''; }).join('\n').replace(/\nRequirements:/, '\n\nRequirements:').replace(/\nReply with/, '\n\nReply with');
+    var L = [];
+    L.push('You are an experienced university examiner.');
+    L.push('Course: ' + (c.title || '') + ' (' + (c.code || '') + ')');
+    L.push('Course Learning Outcomes (CLOs):\n' + (cloLines || '- (no CLOs defined)'));
+    if (o.mine) {
+      if (o.mode === 'format') L.push('TASK: Below are the teacher\'s own questions. Keep their wording EXACTLY as written. Only number them, keep or create sub-parts (a), (b)... where the teacher has them, assign sensible marks, and map each question to the most suitable CLO(s) from the list.');
+      else if (o.mode === 'improve') L.push('TASK: Improve and rewrite the teacher\'s questions below: clearer wording, correct academic level, well-structured parts. Keep the same number of questions and the same topics. Map each to the most suitable CLO(s).');
+      else if (o.mode === 'similar') L.push('TASK: Write NEW, original questions in the same style, level and topic area as the teacher\'s sample questions below. Do not copy them.');
+      else L.push('TASK: Write new exam questions. Follow the teacher\'s instructions / notes below.');
+      L.push('Teacher\'s questions / instructions (between <<< and >>>):\n<<<\n' + o.mine + '\n>>>');
+    } else L.push('TASK: Write original exam questions.');
+    L.push('Requirements:');
+    if (!keep) {
+      L.push('- Number of questions: ' + o.count);
+      L.push('- Marks per question: ' + o.marks);
+      L.push('- Sub-parts per question: ' + (o.parts > 0 ? o.parts + ' (labelled (a), (b), ...; their marks must add up to the question marks)' : 'none (single question)'));
+      L.push('- Difficulty: ' + (o.difficulty || 'mixed'));
+      if (o.bloom) L.push('- Bloom\'s taxonomy level: ' + o.bloom);
+      L.push(o.qtype === 'Numerical' ? '- Question type: NUMERICAL problems with realistic figures/data in the statement; every part needs a calculation with a definite numeric answer. Include units/currency.' :
+        o.qtype === 'Mixed' ? '- Question type: a MIX of numerical problems (realistic data, calculations) and conceptual/theory questions.' :
+        '- Question type: conceptual/theory (define, explain, discuss, compare, apply).');
+    } else {
+      L.push('- Marks per question (if the teacher did not give marks): about ' + o.marks);
+    }
+    if (o.topic) L.push('- Topic(s): ' + o.topic);
+    if (o.notes) L.push('- Additional instructions: ' + o.notes);
+    if (o.cloLabels.length) L.push('- Only use these CLOs: ' + o.cloLabels.join(', '));
+    L.push('- Use the exact CLO labels above (e.g. "CLO 1").');
+    L.push('- Do NOT put answers or marking schemes inside the question text.');
+    if (o.source) L.push('\nBase the questions on this course material (between <<< and >>>):\n<<<\n' + o.source + '\n>>>');
+    if (o.web) {
+      L.push('\nReply ONLY with the questions in exactly this plain-text format (no tables, no bold, no headings, no extra commentary):');
+      L.push('Q1. Short heading (TOTAL marks) CLO 1');
+      L.push('Optional scenario, data or statement on its own lines');
+      L.push('(a) First part question (MARKS marks)');
+      L.push('(b) Second part question (MARKS marks)');
+      if (o.withAnswers) L.push('Answer: short answer key / worked solution with final results');
+      L.push('Q2. Next heading (TOTAL marks) CLO 2');
+      L.push('...');
+    } else {
+      L.push(o.withAnswers ? '- In "answer", give a concise answer key / worked solution (teacher only).' : '- Leave "answer" empty.');
+      L.push('\nReply with ONLY valid JSON (no commentary, no markdown) in exactly this shape:');
+      L.push('{"questions":[{"title":"Short heading","stem":"Optional scenario or statement, or empty","clos":["CLO 1"],"topic":"topic","difficulty":"Easy|Medium|Hard","qtype":"Theory|Numerical","marks":' + o.marks + ',"parts":[{"text":"Part question text","marks":1}],"answer":""}]}');
+    }
+    return L.join('\n');
   }
 
   function extractJson(text) {
@@ -665,7 +680,8 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   function parse(text, opts) {
     opts = opts || {};
     var def = Number(opts.defaultMarks) > 0 ? Number(opts.defaultMarks) : 1;
-    var lines = String(text || '').replace(/\r\n?/g, '\n').replace(/ /g, ' ').replace(/[•●▪]\s*/g, '').split('\n');
+    var lines = String(text || '').replace(/\r\n?/g, '\n').replace(/ /g, ' ').replace(/[•●▪]\s*/g, '')
+      .replace(/\*\*|__|`/g, '').replace(/^[ \t]*(?:#{1,6}|>)[ \t]*/gm, '').replace(/^[ \t]*[-*][ \t]+(?=\(?[a-z]\)|Q\d)/gim, '').split('\n');
     var qStyle = lines.some(function (l) { return RE_QSTYLE.test(l); });
     var hasNumbered = qStyle || lines.some(function (l) { return RE_Q.test(l); });
     var out = [], cur = null, part = null, mode = 'stem', ignored = 0;
@@ -1742,6 +1758,20 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     psCandidates = []; renderPaste(); $('psMsg').textContent = '';
     $('psDlg').showModal(); $('psText').focus();
   }
+  function fromPasted(r, c, qtype) {
+    var added = [];
+    var qs = r.questions.map(function (pq) {
+      var ids = pq.cloNums.map(function (n) {
+        var lab = 'CLO ' + n;
+        var x = c.clos.find(function (y) { return y.label.replace(/\s+/g, '').toUpperCase() === lab.replace(' ', ''); });
+        if (!x) { x = { id: S.newId(), label: lab, desc: '' }; c.clos.push(x); added.push(lab); }
+        return x.id;
+      });
+      return S.cleanQuestion({ courseId: c.id, title: pq.title, stem: pq.stem, parts: pq.parts, marks: pq.marks, clos: ids, answer: pq.answer, qtype: qtype || '' });
+    });
+    if (added.length) { c.clos.sort(function (a, b) { return a.label.localeCompare(b.label, undefined, { numeric: true }); }); changed(); }
+    return { qs: qs, added: added };
+  }
   function readPaste() {
     var c = course($('psCourse').value), msg = $('psMsg');
     if (!c) return;
@@ -1810,10 +1840,10 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       } }));
     });
     topicInfo($('aiTopicInfo'), c, $('aiTopic').value);
-    $('aiKeyState').textContent = data.settings.ai.geminiKey ? 'Using your Gemini key · model ' + data.settings.ai.model : 'No Gemini key yet — add one in Backup & Security, or use the browser option below.';
+    $('aiKeyState').textContent = data.settings.ai.geminiKey ? 'Using your Gemini key · model ' + data.settings.ai.model : 'No Gemini key saved — use Open Gemini / Open Copilot above, or add a key in Backup & Security.';
     renderAIResults();
   }
-  function aiPrompt() {
+  function aiPrompt(web) {
     var c = course(aiSel.course);
     if (!c) throw new Error('Choose a course first.');
     var sel = c.clos.filter(function (x) { return aiSel.clos.indexOf(x.id) >= 0; }).map(function (x) { return x.label; });
@@ -1822,9 +1852,11 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       course: c, cloLabels: sel, count: clamp($('aiCount').value, 1, 20, 3), marks: clamp($('aiMarks').value, 0.5, 100, 4),
       parts: Math.round(clamp($('aiParts').value, 0, 10, 2)), difficulty: $('aiDiff').value, bloom: $('aiBloom').value,
       qtype: $('aiType').value, topic: $('aiTopic').value.trim().slice(0, 300), notes: $('aiNotes').value.trim().slice(0, 500),
-      source: $('aiSource').value.trim().slice(0, 60000), withAnswers: $('aiAnswers').checked
+      source: $('aiSource').value.trim().slice(0, 60000), withAnswers: $('aiAnswers').checked,
+      mine: $('aiMine').value.trim().slice(0, 60000), mode: $('aiMode').value, web: !!web
     });
   }
+  function updPromptView() { try { $('aiPromptView').value = aiPrompt(true); } catch (e) { $('aiPromptView').value = e.message; } }
   async function aiGemini() {
     var key = data.settings.ai.geminiKey;
     if (!key) { toast('Add your Gemini API key first (Backup & Security tab), or use “No API key?” below.', 'err'); return showTab('backup'); }
@@ -1840,50 +1872,107 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       $('aiMsg').textContent = 'Gemini error: ' + msg; $('aiMsg').className = 'small err';
     } finally { btn.disabled = false; btn.textContent = 'Generate with Gemini'; }
   }
+  var lastPrompt = '';
   async function copyPrompt() {
-    var prompt = aiPrompt();
+    var prompt = aiPrompt(true); lastPrompt = prompt; updPromptView();
     try { await navigator.clipboard.writeText(prompt); return true; }
-    catch (e) { $('aiPaste').value = ''; $('aiMsg').textContent = 'Clipboard blocked — copy the prompt from the box above manually.'; $('aiPaste').value = prompt; return false; }
+    catch (e) { $('aiPromptView').closest('details').open = true; $('aiPromptView').select(); toast('Could not copy automatically — the prompt is selected below, press Ctrl+C.', 'err'); return false; }
   }
   async function aiOpen(url) {
     try {
       var ok = await copyPrompt();
       window.open(url, '_blank', 'noopener,noreferrer');
-      if (ok) { toast('Prompt copied. Paste it in the AI (Ctrl+V), then paste the reply back here.'); $('aiPaste').value = ''; $('aiPaste').focus(); }
+      $('aiBack').classList.remove('hidden');
+      if (ok) toast('Prompt copied. In the AI press Ctrl+V, add any command, send. Then copy its answer and come back here.');
     } catch (e) { toast(e.message, 'err'); }
   }
+  async function pasteClipboard() {
+    var t = '';
+    try { t = await navigator.clipboard.readText(); }
+    catch (e) { $('aiPaste').focus(); return toast('Clipboard access was blocked. Click in the answer box and press Ctrl+V instead.', 'err'); }
+    if (!t.trim()) return toast('The clipboard is empty. Copy the AI’s answer first.', 'err');
+    if (lastPrompt && t.trim() === lastPrompt.trim()) return toast('The clipboard still has the prompt. Copy the AI’s answer first, then try again.', 'err');
+    $('aiPaste').value = t; $('aiBack').classList.add('hidden'); parseAI();
+  }
   function parseAI() {
-    var c = course(aiSel.course), msg = $('aiMsg');
+    var c = course(aiSel.course), msg = $('aiMsg'), txt = $('aiPaste').value;
     if (!c) return toast('Choose a course first.', 'err');
-    try {
-      aiCandidates = AI.parseQuestions($('aiPaste').value, c).map(function (q) { return { q: q, on: true }; });
-      msg.className = 'small ok';
-      msg.textContent = aiCandidates.length ? aiCandidates.length + ' question(s) read. Review, untick any you don’t want, then add them to the bank.' : 'No questions found in the reply.';
-    } catch (e) { aiCandidates = []; msg.className = 'small err'; msg.textContent = 'Could not read the reply: ' + e.message; }
+    if (!txt.trim()) { msg.className = 'small err'; msg.textContent = 'Paste the AI’s answer first.'; return; }
+    var qs = [], added = [];
+    try { qs = AI.parseQuestions(txt, c); } catch (e) { qs = []; }
+    if (!qs.length) { var r = fromPasted(window.QBPaste.parse(txt, { defaultMarks: Number($('aiMarks').value) || 1 }), c, $('aiType').value === 'Mixed' ? '' : $('aiType').value); qs = r.qs; added = r.added; }
+    qs.forEach(function (q) { if (!q.clos.length && aiSel.clos.length) q.clos = aiSel.clos.slice(); if (!q.topic && $('aiTopic').value.trim()) q.topic = $('aiTopic').value.split(',')[0].trim(); });
+    aiCandidates = qs.map(function (q) { return { q: q, on: true }; });
+    msg.className = 'small ' + (qs.length ? 'ok' : 'err');
+    msg.textContent = qs.length ? qs.length + ' question(s) read' + (added.length ? ' (new CLOs added to the course: ' + added.join(', ') + ')' : '') + '. Adjust marks and CLOs below if needed, then click “Add to question paper”.'
+      : 'No questions found in the answer. Make sure you copied the AI’s whole answer.';
     renderAIResults();
   }
+  function setTotal(q, m) {
+    m = Math.max(0, Math.round(Number(m) * 2) / 2); if (!m) return;
+    if (!q.parts.length) { q.marks = m; return; }
+    var each = Math.floor(m / q.parts.length * 2) / 2, rest = round(m - each * q.parts.length);
+    q.parts.forEach(function (p, i) { p.marks = each + (i === q.parts.length - 1 ? rest : 0); });
+  }
   function renderAIResults() {
-    var box = clear($('aiResults'));
-    aiCandidates.forEach(function (cand) {
+    var box = clear($('aiResults')), c = course(aiSel.course);
+    var any = aiCandidates.length > 0;
+    $('aiBulk').classList.toggle('hidden', !any); $('aiAddBar').classList.toggle('hidden', !any);
+    var bc = clear($('aiBulkClos'));
+    (c ? c.clos : []).forEach(function (x) {
+      var sel = aiCandidates.filter(function (k) { return k.on; }), all = sel.length && sel.every(function (k) { return k.q.clos.indexOf(x.id) >= 0; });
+      bc.append(h('button', { type: 'button', class: 'chip' + (all ? ' on' : ''), title: x.desc, text: x.label, onclick: function () {
+        sel.forEach(function (k) { var i = k.q.clos.indexOf(x.id); if (all) { if (i >= 0) k.q.clos.splice(i, 1); } else if (i < 0) k.q.clos.push(x.id); });
+        renderAIResults();
+      } }));
+    });
+    aiCandidates.forEach(function (cand, ci) {
       var q = cand.q;
+      var title = h('input', { class: 'edit-title', value: q.title, placeholder: '(no heading)', maxlength: 300, oninput: function () { q.title = title.value; } });
+      var tot = h('span', { class: 'badge marks', text: D.fmtMarks(total(q)) });
+      var refreshTot = function () { tot.textContent = D.fmtMarks(total(q)); };
+      var clos = h('div', { class: 'cand-clos' }, h('span', { class: 'small muted', text: 'CLOs:' }), (c ? c.clos : []).map(function (x) {
+        var on = q.clos.indexOf(x.id) >= 0;
+        return h('button', { type: 'button', class: 'chip' + (on ? ' on' : ''), title: x.desc, text: x.label, onclick: function () {
+          if (on) q.clos = q.clos.filter(function (y) { return y !== x.id; }); else q.clos.push(x.id); renderAIResults();
+        } });
+      }), q.clos.length ? null : h('span', { class: 'badge warn', text: 'pick a CLO' }));
+      var mk = function (get, set) {
+        var inp = h('input', { type: 'number', min: 0, step: 0.5, value: get(), 'aria-label': 'Marks', oninput: function () { set(Number(inp.value) || 0); refreshTot(); } });
+        return h('span', { class: 'mk-wrap' }, inp, 'marks');
+      };
+      var body = h('div', { class: 'qbody' },
+        q.stem ? h('p', { class: 'stem', text: q.stem }) : null,
+        q.parts.length ? q.parts.map(function (p, i) {
+          return h('div', { class: 'cand-part' }, h('span', null, h('b', { text: '(' + D.letter(i) + ') ' }), p.text), mk(function () { return p.marks; }, function (v) { p.marks = v; }));
+        }) : h('div', { class: 'cand-part' }, h('span', { class: 'muted small', text: 'Marks for this question' }), mk(function () { return q.marks; }, function (v) { q.marks = v; })));
       box.append(h('article', { class: 'qcard' + (cand.on ? '' : ' off') },
-        h('div', { class: 'qhead' }, h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: cand.on, onchange: function (e) { cand.on = e.target.checked; renderAIResults(); } }), h('b', { text: ' ' + (q.title || '(untitled)') })), badges(q)),
-        questionBody(q),
+        h('div', { class: 'qhead' }, h('input', { type: 'checkbox', checked: cand.on, title: 'Include this question', onchange: function (e) { cand.on = e.target.checked; renderAIResults(); } }),
+          h('span', { class: 'qn', text: 'Q' + (ci + 1) }), title, tot),
+        clos, body,
         q.answer ? h('details', { class: 'answer' }, h('summary', { text: 'Answer key' }), h('p', { text: q.answer })) : null));
     });
-    $('aiAddSel').disabled = !aiCandidates.some(function (x) { return x.on; });
+    var none = !aiCandidates.some(function (x) { return x.on; });
+    $('aiAddSel').disabled = none; $('aiAddPaper').disabled = none;
   }
-  function aiAdd() {
+  function aiAdd(toPaper) {
     var picked = aiCandidates.filter(function (x) { return x.on; }).map(function (x) { return x.q; });
     if (!picked.length) return;
-    picked.forEach(function (q) { q.updatedAt = q.createdAt = new Date().toISOString(); });
+    var noClo = picked.filter(function (q) { return !q.clos.length; }).length;
+    if (noClo && !confirm(noClo + ' question(s) have no CLO. Add anyway?')) return;
+    if (toPaper && data.paper.courseId && data.paper.courseId !== aiSel.course && data.paper.questionIds.length &&
+      !confirm('The current paper is for another course. Start a new paper for this course? (The old paper’s questions stay in the bank.)')) return;
+    var now = new Date().toISOString();
+    picked = picked.map(function (q) { return S.cleanQuestion(Object.assign({}, q, { createdAt: now, updatedAt: now })); });
     data.questions = picked.concat(data.questions);
-    if ($('aiToPaper').checked) {
+    if (toPaper) {
       if (data.paper.courseId !== aiSel.course) { data.paper.courseId = aiSel.course; data.paper.questionIds = []; }
       picked.forEach(function (q) { data.paper.questionIds.push(q.id); });
     }
     aiCandidates = []; $('aiPaste').value = ''; $('aiMsg').textContent = '';
-    changed(); renderAIResults(); toast(picked.length + ' question(s) added to the bank. Press Save to back up.');
+    changed(); renderAIResults();
+    if (toPaper) { showTab('paper'); toast(picked.length + ' question(s) added to the paper (and saved in the bank). Press Save to back up.'); }
+    else toast(picked.length + ' question(s) added to the bank. Press Save to back up.');
   }
 
   // ---------- BACKUP & SECURITY ----------
@@ -2100,7 +2189,17 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('aiOpenCopilot').addEventListener('click', function () { aiOpen(AI.COPILOT_WEB); });
     $('aiCopy').addEventListener('click', function () { copyPrompt().then(function (ok) { if (ok) toast('Prompt copied.'); }).catch(function (e) { toast(e.message, 'err'); }); });
     $('aiParse').addEventListener('click', parseAI);
-    $('aiAddSel').addEventListener('click', aiAdd);
+    $('aiAddSel').addEventListener('click', function () { aiAdd(false); });
+    $('aiAddPaper').addEventListener('click', function () { aiAdd(true); });
+    $('aiClip').addEventListener('click', pasteClipboard);
+    $('aiClip2').addEventListener('click', pasteClipboard);
+    $('aiBulkApply').addEventListener('click', function () {
+      var m = Number($('aiBulkMarks').value); if (!(m > 0)) return toast('Type the marks first.', 'err');
+      aiCandidates.forEach(function (k) { if (k.on) setTotal(k.q, m); }); renderAIResults();
+    });
+    window.addEventListener('focus', function () { var b = $('aiBack'); if (!b.classList.contains('hidden') && current() === 'ai') { b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); } });
+    ['aiMine', 'aiMode', 'aiCount', 'aiMarks', 'aiParts', 'aiDiff', 'aiBloom', 'aiType', 'aiTopic', 'aiNotes', 'aiSource', 'aiAnswers'].forEach(function (id) { $(id).addEventListener('change', updPromptView); });
+    document.querySelector('.web-ai details').addEventListener('toggle', updPromptView);
 
     // backup & security
     document.querySelectorAll('input[name=bmode]').forEach(function (r) { r.addEventListener('change', function () { data.settings.backupMode = r.value; changed(); setStatus(); }); });

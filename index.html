@@ -97,39 +97,60 @@
         <div class="field"><label for="aiNotes">Extra instructions (optional)</label><input id="aiNotes" type="text" maxlength="500" placeholder="e.g. use Pakistani context and PKR figures"></div>
         <div class="field"><label for="aiSource">Course material to base questions on (optional)</label>
           <textarea id="aiSource" rows="4" maxlength="60000" placeholder="Paste lecture notes or a chapter summary…"></textarea></div>
+        <div class="field mine"><label for="aiMine">Your own questions or instructions for the AI (optional)</label>
+          <select id="aiMode">
+            <option value="new">Use as instructions / notes and write new questions</option>
+            <option value="similar">Write new questions similar to mine</option>
+            <option value="improve">Improve and rewrite my questions</option>
+            <option value="format">Keep my questions as they are, just add parts, marks &amp; CLOs</option>
+          </select>
+          <textarea id="aiMine" rows="5" maxlength="60000" placeholder="Paste your questions here, or type what you want, e.g. &#8220;Make 2 case-study questions on inflation in Pakistan with calculations&#8221;"></textarea></div>
         <label class="check"><input id="aiAnswers" type="checkbox" checked> Also create an answer key (kept in the bank, never printed on the paper)</label>
 
-        <div class="ai-actions">
-          <button id="aiGemini" class="btn primary">Generate with Gemini</button>
-          <span class="muted small" id="aiKeyState"></span>
-        </div>
-        <details class="nokey">
-          <summary>No API key? Use Gemini or Copilot in your browser instead</summary>
+        <div class="web-ai">
+          <h3>Use Gemini or Copilot in your browser (no key needed)</h3>
           <ol class="small">
-            <li>Click a button below. The prompt is copied and the AI site opens (it uses the Google / Microsoft account already signed in to this browser).</li>
-            <li>Paste the prompt there (Ctrl+V) and send it.</li>
-            <li>Copy the AI's whole reply, paste it in the box on the right, and click <b>Read reply</b>.</li>
+            <li>Click <b>Open Gemini</b> or <b>Open Copilot</b>. Everything above, including your own questions, is copied as the prompt.</li>
+            <li>In Gemini / Copilot press <b>Ctrl+V</b>. Add any command of your own if you like, then send.</li>
+            <li>Copy the answer (the copy icon under the answer) and come back here. Click <b>Paste answer from clipboard</b>; the questions go straight to the paper.</li>
           </ol>
           <div class="ai-actions">
-            <button id="aiOpenGemini" class="btn">Copy prompt &amp; open Gemini</button>
-            <button id="aiOpenCopilot" class="btn">Copy prompt &amp; open Copilot</button>
+            <button id="aiOpenGemini" class="btn primary">Open Gemini</button>
+            <button id="aiOpenCopilot" class="btn primary">Open Copilot</button>
             <button id="aiCopy" class="btn ghost">Copy prompt only</button>
           </div>
-        </details>
+          <details><summary class="small">See the prompt that will be sent</summary><textarea id="aiPromptView" rows="8" readonly></textarea></details>
+        </div>
+        <hr>
+        <div class="ai-actions">
+          <button id="aiGemini" class="btn">Generate here with my Gemini key</button>
+          <span class="muted small" id="aiKeyState"></span>
+        </div>
       </div>
 
       <div class="card">
         <h2>Results</h2>
-        <div class="field"><label for="aiPaste">AI reply (filled automatically with Gemini, or paste from Gemini / Copilot)</label>
-          <textarea id="aiPaste" rows="5" placeholder='{"questions":[ … ]}'></textarea></div>
+        <div id="aiBack" class="back-banner hidden">
+          <div><b>Back from the AI?</b> Copy its whole answer there, then click:</div>
+          <button id="aiClip" class="btn primary">📋 Paste answer from clipboard</button>
+        </div>
+        <div class="field"><label for="aiPaste">AI answer (any format — filled automatically, or paste it here)</label>
+          <textarea id="aiPaste" rows="5" placeholder="Q1. Heading (4 marks) CLO 1&#10;(a) &#8230; (2 marks)"></textarea></div>
         <div class="ai-actions">
-          <button id="aiParse" class="btn">Read reply</button>
-          <span class="spacer"></span>
-          <label class="check small"><input id="aiToPaper" type="checkbox"> Also add to current paper</label>
-          <button id="aiAddSel" class="btn primary" disabled>Add selected to bank</button>
+          <button id="aiClip2" class="btn">📋 Paste from clipboard</button>
+          <button id="aiParse" class="btn">Read answer</button>
         </div>
         <p id="aiMsg" class="small"></p>
+        <div id="aiBulk" class="bulk hidden">
+          <div class="bulk-row"><span class="small"><b>All ticked questions:</b> marks each</span>
+            <input id="aiBulkMarks" type="number" min="0.5" step="0.5" placeholder="e.g. 5"><button id="aiBulkApply" class="btn small">Apply marks</button></div>
+          <div class="bulk-row"><span class="small"><b>Set CLO on all:</b></span><div id="aiBulkClos" class="chips"></div></div>
+        </div>
         <div id="aiResults" class="qlist"></div>
+        <div id="aiAddBar" class="ai-actions hidden">
+          <button id="aiAddPaper" class="btn primary">➕ Add to question paper</button>
+          <button id="aiAddSel" class="btn">Add to bank only</button>
+        </div>
       </div>
     </div>
   </section>
