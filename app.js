@@ -73,13 +73,18 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
 
   // ---------- sanitising (used for load, import and AI output) ----------
+  function ids(v) { return arr(v, 60).filter(function (x) { return typeof x === 'string'; }).map(function (x) { return x.slice(0, 64); }); }
   function cleanCourse(c) {
     c = c && typeof c === 'object' ? c : {};
     return {
       id: id(c.id), code: str(c.code, 40).trim(), title: str(c.title, 200).trim(),
       clos: arr(c.clos, 60).map(function (x) {
         x = x && typeof x === 'object' ? x : {};
-        return { id: id(x.id), label: str(x.label, 30).trim() || 'CLO', desc: str(x.desc, 600) };
+        return { id: id(x.id), label: str(x.label, 30).trim() || 'CLO', desc: str(x.desc, 600), plos: ids(x.plos) };
+      }),
+      plos: arr(c.plos, 60).map(function (x) {
+        x = x && typeof x === 'object' ? x : {};
+        return { id: id(x.id), label: str(x.label, 30).trim() || 'PLO', desc: str(x.desc, 600) };
       }),
       topics: arr(c.topics, 150).map(function (t) {
         t = t && typeof t === 'object' ? t : {};
@@ -93,12 +98,13 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   function cleanQuestion(q) {
     q = q && typeof q === 'object' ? q : {};
     return {
-      id: id(q.id), courseId: str(q.courseId, 64), title: str(q.title, 300), stem: str(q.stem, 20000),
+      id: id(q.id), courseId: str(q.courseId, 64), title: str(q.title, 300), stem: str(q.stem, 60000), data: str(q.data, 150000),
       parts: arr(q.parts, 40).map(function (p) {
         p = p && typeof p === 'object' ? p : {};
         return { id: id(p.id), text: str(p.text, 5000), marks: num(p.marks) };
       }),
-      marks: num(q.marks), clos: arr(q.clos, 60).filter(function (x) { return typeof x === 'string'; }).map(function (x) { return x.slice(0, 64); }),
+      marks: num(q.marks), clos: ids(q.clos), plos: ids(q.plos),
+      tableLines: ['', 'lines', 'none'].indexOf(q.tableLines) >= 0 ? q.tableLines : '', dataLines: ['', 'lines', 'none'].indexOf(q.dataLines) >= 0 ? q.dataLines : '',
       answer: str(q.answer, 20000), qtype: ['', 'Theory', 'Numerical'].indexOf(q.qtype) >= 0 ? q.qtype : '',
       topic: str(q.topic, 200), difficulty: DIFF.indexOf(q.difficulty) >= 0 ? q.difficulty : '',
       createdAt: str(q.createdAt, 40) || new Date().toISOString(), updatedAt: str(q.updatedAt, 40) || new Date().toISOString()
@@ -135,7 +141,8 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         instructor: str(p.instructor, 120), timeAllowed: typeof p.timeAllowed === 'string' ? p.timeAllowed.slice(0, 40) : dp.timeAllowed,
         date: /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : '', maxMarksOverride: p.maxMarksOverride === '' || p.maxMarksOverride == null ? '' : num(p.maxMarksOverride),
         instructions: str(p.instructions, 3000), department: str(p.department, 150), university: str(p.university, 120), questionIds: arr(p.questionIds, 200).filter(function (x) { return typeof x === 'string'; }),
-        appendCloTable: !!p.appendCloTable
+        appendCloTable: !!p.appendCloTable, showPlo: p.showPlo !== false,
+        stemLines: p.stemLines === 'none' ? 'none' : 'lines', dataLines: p.dataLines === 'lines' ? 'lines' : 'none'
       }
     };
   }
@@ -247,7 +254,10 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     isEncrypted: isEncrypted, decryptEnvelope: decryptEnvelope, newKeyInfo: newKeyInfo, encryptWith: encryptWith,
     readRaw: readRaw, writeLocal: writeLocal, wipeLocal: wipeLocal,
     fsSupported: fsSupported, getLinkedFile: getLinkedFile, linkNewFile: linkNewFile, unlinkFile: unlinkFile, writeToHandle: writeToHandle,
-    download: download, stamp: stamp, MAX_IMPORT_BYTES: 15 * 1024 * 1024
+    download: download, stamp: stamp, MAX_IMPORT_BYTES: 15 * 1024 * 1024,
+    getTemplate: function () { return idbGet('template').catch(function () { return null; }); },
+    setTemplate: function (t) { return idbSet('template', t); },
+    clearTemplate: function () { return idbDel('template'); }
   };
 })();
 
@@ -333,17 +343,33 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
 
   // ---------- Questions ----------
   // q = {title, stem, parts:[{text, marks}], marks, cloLabels:[..]}
-  function questionsXml(qs) {
-    var out = '';
-    var J = '<w:jc w:val="both"/>';
+  function ploText(labels) {
+    if (!labels || !labels.length) return '';
+    var nums = labels.map(function (l) { var m = /^PLO\s*-?\s*(\d+)$/i.exec(l.trim()); return m ? m[1] : null; });
+    return nums.every(Boolean) ? 'PLO ' + nums.join(', ') : labels.join(', ');
+  }
+  // heading right side: "(10 marks)  CLO 2 | PLO 1, 3, 6" — right-aligned at the page margin ({{RTAB}})
+  function rightText(q, showPlo) {
+    var clo = q.cloLabels && q.cloLabels.length ? q.cloLabels.join(', ') : '', plo = showPlo ? ploText(q.ploLabels) : '';
+    return '(' + fmtMarks(questionTotal(q)) + ')' + (clo || plo ? '  ' + [clo, plo].filter(Boolean).join(' | ') : '');
+  }
+  function questionsXml(qs, opts) {
+    opts = opts || {};
+    var out = '', J = '<w:jc w:val="both"/>', printed = {};
     qs.forEach(function (q, i) {
-      var total = questionTotal(q);
-      var right = '(' + fmtMarks(total) + ')' + (q.cloLabels && q.cloLabels.length ? '  ' + q.cloLabels.join(', ') : '');
-      out += para('<w:keepNext/><w:tabs><w:tab w:val="left" w:pos="7340"/></w:tabs>' + J + '<w:rPr><w:b/></w:rPr>',
-        run('Q' + (i + 1) + '. ' + (q.title || ''), { b: true }) + tab({ b: true }) + run(right, { b: true }));
+      // shared data / exhibits: printed once, before the first question that uses them
+      if (q.data && q.data.trim() && !printed[q.data]) {
+        printed[q.data] = 1;
+        var users = []; qs.forEach(function (x, k) { if (x.data === q.data) users.push(k + 1); });
+        var lab = users.length > 1 ? 'Use the following information for Questions ' + users.slice(0, -1).join(', ') + ' and ' + users[users.length - 1] + ':'
+          : 'Use the following information for Question ' + users[0] + ':';
+        out += para('<w:keepNext/>' + J, run(lab, { b: true })) + stemXml(q.data, q.dataLines === 'none') + para(J);
+      }
+      out += para('<w:keepNext/><w:tabs><w:tab w:val="right" w:pos="{{RTAB}}"/></w:tabs>' + J + '<w:rPr><w:b/></w:rPr>',
+        run('Q' + (i + 1) + '. ' + (q.title || ''), { b: true }) + tab({ b: true }) + run(rightText(q, opts.showPlo !== false), { b: true }));
       out += para('<w:keepNext/>' + J + '<w:rPr><w:b/></w:rPr>');
       if (q.stem && q.stem.trim()) {
-        out += stemXml(q.stem);
+        out += stemXml(q.stem, q.tableLines === 'none');
         if (q.parts && q.parts.length) out += para(J);
       }
       (q.parts || []).forEach(function (p, pi) {
@@ -354,24 +380,35 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     return out;
   }
 
-
   // Stem text: paragraphs separated by blank lines; consecutive lines containing "|"
   // (e.g. "Year | Cash flow") become a real Word table — handy for numerical data.
   function isRow(l) { return l.indexOf('|') >= 0 && l.replace(/[|\s]/g, '') !== ''; }
   function isSep(l) { return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l); }
-  function cells(l) { return l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (c) { return c.trim(); }); }
-  function stemXml(stem) {
+  function cells(l) {
+    var t = l.trim();
+    if (t.charAt(0) === '|' && t.charAt(t.length - 1) === '|' && t.length > 1) t = t.slice(1, -1);
+    return t.split('|').map(function (c) { return c.trim(); });
+  }
+  function isNum(c) { return /^[-+\u2013(]?\s*[\d.,]+\s*%?\)?$|^[-\u2013]$/.test(String(c).trim()); }
+  function stemXml(stem, noLines) {
     var J = '<w:jc w:val="both"/>', out = '', buf = [], lines = stem.replace(/\r\n?/g, '\n').split('\n'), i = 0;
-    function flush() { if (buf.length) { var t = buf.join('\n').replace(/^\n+|\n+$/g, ''); if (t) out += para(J + '<w:rPr><w:bCs/></w:rPr>', run(t, { bCs: true })); buf = []; } }
+    // each line is its own paragraph (a line break inside a justified paragraph would stretch the line)
+    function flush() { buf.forEach(function (l) { if (l.trim()) out += para(J + '<w:rPr><w:bCs/></w:rPr>', run(l, { bCs: true })); }); buf = []; }
     while (i < lines.length) {
       if (isRow(lines[i]) && i + 1 < lines.length && (isRow(lines[i + 1]) || isSep(lines[i + 1]))) {
+        // a short line right above a table is its title: bold, centred
+        var title = buf.length && buf[buf.length - 1].trim().length < 90 && !/[.:;?]$/.test(buf[buf.length - 1].trim()) ? buf.pop().trim() : '';
         flush();
+        if (title) out += para('<w:keepNext/><w:jc w:val="center"/>', run(title, { b: true }));
         var rows = [];
         while (i < lines.length && (isRow(lines[i]) || isSep(lines[i]))) { if (!isSep(lines[i])) rows.push(cells(lines[i])); i++; }
         var n = Math.max.apply(null, rows.map(function (r) { return r.length; }));
         rows = rows.map(function (r) { while (r.length < n) r.push(''); return r; });
-        var w = Math.floor(Math.min(9000, 1800 * n) / n), widths = rows[0].map(function () { return w; });
-        out += table(widths, rows[0], rows.slice(1), true);
+        // column widths follow the content (long label column, compact number columns)
+        var lens = []; for (var c = 0; c < n; c++) lens.push(Math.max(4, Math.min(42, Math.max.apply(null, rows.map(function (r) { return String(r[c] || '').length; })))));
+        var sum = lens.reduce(function (a, b) { return a + b; }, 0), totalW = Math.min(10000, Math.max(4000, sum * 150));
+        var widths = lens.map(function (L) { return Math.max(800, Math.round(totalW * L / sum)); });
+        out += table(widths, rows[0], rows.slice(1), true, true, !!noLines);
       } else if (lines[i].trim() === '') { flush(); i++; }
       else { buf.push(lines[i]); i++; }
     }
@@ -385,17 +422,17 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
 
   // ---------- Tables ----------
-  function table(widths, header, rows, center) {
+  function table(widths, header, rows, center, alignNums, noLines) {
     var b = '<w:tblBorders>' + ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(function (s) {
-      return '<w:' + s + ' w:val="single" w:sz="4" w:space="0" w:color="000000"/>';
+      return noLines ? '<w:' + s + ' w:val="nil"/>' : '<w:' + s + ' w:val="single" w:sz="4" w:space="0" w:color="000000"/>';
     }).join('') + '</w:tblBorders>';
     var x = '<w:tbl><w:tblPr><w:tblW w:w="' + widths.reduce(function (a, c) { return a + c; }, 0) + '" w:type="dxa"/>' + b +
       (center ? '<w:jc w:val="center"/>' : '') + '<w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>' +
       widths.map(function (w) { return '<w:gridCol w:w="' + w + '"/>'; }).join('') + '</w:tblGrid>';
     function row(cells, head) {
       return '<w:tr>' + (head ? '<w:trPr><w:tblHeader/></w:trPr>' : '<w:trPr><w:cantSplit/></w:trPr>') + cells.map(function (c, i) {
-        return '<w:tc><w:tcPr><w:tcW w:w="' + widths[i] + '" w:type="dxa"/>' + (head ? '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>' : '') +
-          '</w:tcPr>' + para('<w:spacing w:before="40" w:after="40"/>', run(c, { b: !!head, sz: 20 })) + '</w:tc>';
+        return '<w:tc><w:tcPr><w:tcW w:w="' + widths[i] + '" w:type="dxa"/>' + (head && !noLines ? '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>' : '') +
+          '</w:tcPr>' + para('<w:spacing w:before="40" w:after="40"/>' + (alignNums && i > 0 && (head || isNum(c)) ? '<w:jc w:val="right"/>' : ''), run(c, { b: !!head, sz: 20 })) + '</w:tc>';
       }).join('') + '</w:tr>';
     }
     x += row(header, true);
@@ -424,32 +461,96 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     return u;
   }
 
+  function textWidth(doc) {
+    var w = /<w:pgSz[^>]*w:w="(\d+)"/.exec(doc), l = /<w:pgMar[^>]*w:left="(\d+)"/.exec(doc), r = /<w:pgMar[^>]*w:right="(\d+)"/.exec(doc);
+    var v = (w ? +w[1] : 12240) - (l ? +l[1] : 720) - (r ? +r[1] : 720);
+    return v > 3000 && v < 20000 ? v : 10800;
+  }
   async function fill(parts) {
-    if (typeof JSZip === 'undefined' || !window.QB_TEMPLATE_DOCX_B64) throw new Error('Template or JSZip not loaded');
-    var zip = await JSZip.loadAsync(b64ToBytes(window.QB_TEMPLATE_DOCX_B64));
+    var b64 = window.QB_CUSTOM_TEMPLATE_B64 || window.QB_TEMPLATE_DOCX_B64;
+    if (typeof JSZip === 'undefined' || !b64) throw new Error('Template or JSZip not loaded');
+    var zip = await JSZip.loadAsync(b64ToBytes(b64));
     var doc = await zip.file('word/document.xml').async('string');
-    var hdr = await zip.file('word/header1.xml').async('string');
     // split/join so "$" in user text can never be interpreted as a replace pattern
     function put(s, k, v) { return s.split('{{' + k + '}}').join(v); }
-    doc = put(doc, 'HEADER_BLOCK', parts.headerBlock);
+    var rtab = String(textWidth(doc) - 20);
+    doc = put(doc, 'HEADER_BLOCK', put(parts.headerBlock, 'RTAB', rtab));
     doc = put(doc, 'INSTRUCTIONS', parts.instructions);
-    doc = put(doc, 'QUESTIONS', parts.questions);
-    hdr = put(hdr, 'UNIVERSITY', esc(parts.university));
-    hdr = put(hdr, 'DEPT_PREFIX', esc(parts.deptPrefix));
-    hdr = put(hdr, 'DEPT', esc(parts.department));
-    hdr = put(hdr, 'EXAM_TITLE', esc(parts.examTitle));
+    doc = put(doc, 'QUESTIONS', put(parts.questions, 'RTAB', rtab));
+    doc = put(doc, 'UNIVERSITY', esc(parts.university)); doc = put(doc, 'DEPT_PREFIX', esc(parts.deptPrefix));
+    doc = put(doc, 'DEPT', esc(parts.department)); doc = put(doc, 'EXAM_TITLE', esc(parts.examTitle));
     zip.file('word/document.xml', doc);
-    zip.file('word/header1.xml', hdr);
+    var heads = Object.keys(zip.files).filter(function (n) { return /^word\/(?:header|footer)\d*\.xml$/.test(n); });
+    for (var i = 0; i < heads.length; i++) {
+      var hx = await zip.file(heads[i]).async('string');
+      hx = put(hx, 'UNIVERSITY', esc(parts.university)); hx = put(hx, 'DEPT_PREFIX', esc(parts.deptPrefix));
+      hx = put(hx, 'DEPT', esc(parts.department)); hx = put(hx, 'EXAM_TITLE', esc(parts.examTitle));
+      zip.file(heads[i], hx);
+    }
     // neutral document properties (no author names leak from the template)
     var now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
     zip.file('docProps/core.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>' + esc(parts.docTitle || '') + '</dc:title><dc:creator>Question Bank</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">' + now + '</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">' + now + '</dcterms:modified></cp:coreProperties>');
     return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', compression: 'DEFLATE' });
   }
 
+  // ---------- custom template: any .docx -> letterhead template ----------
+  // Keeps the file's headers/footers/logo/styles/page setup; the body is replaced by the paper.
+  // Header lines that look like the exam title / department / university become fill-in fields.
+  function bytesToB64(u8) { var s = '', CH = 0x8000; for (var i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, i + CH)); return btoa(s); }
+  function ptext(p) { var t = ''; p.replace(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g, function (m, x) { t += x; return m; }); return t.replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim(); }
+  function setParaText(p, ph) {
+    var done = false;
+    return p.replace(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g, function (m, x) {
+      if (!done) {
+        if (!/[A-Za-z0-9]/.test(x)) return m;             // keep leading spacing runs (they position the text)
+        done = true; return '<w:t xml:space="preserve">' + ph + '</w:t>';
+      }
+      return '<w:t></w:t>';                                // everything after the field is replaced
+    });
+  }
+  async function prepareTemplate(buf) {
+    var zip;
+    try { zip = await JSZip.loadAsync(buf); } catch (e) { throw new Error('Please choose a Word (.docx) file.'); }
+    var f = zip.file('word/document.xml');
+    if (!f) throw new Error('This is not a Word (.docx) file.');
+    var doc = await f.async('string'), found = {};
+    if (doc.indexOf('{{QUESTIONS}}') < 0) {
+      var bs = doc.indexOf('<w:body>'), be = doc.lastIndexOf('</w:body>');
+      if (bs < 0 || be < 0) throw new Error('Could not read this Word file.');
+      var body = doc.slice(bs + 8, be), si = body.lastIndexOf('<w:sectPr');
+      var sect = si >= 0 ? body.slice(si) : '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1080" w:bottom="1080" w:left="1080" w:header="567" w:footer="567" w:gutter="0"/></w:sectPr>';
+      var sep = '<w:p><w:pPr><w:pBdr><w:bottom w:val="dotted" w:sz="8" w:space="1" w:color="000000"/></w:pBdr><w:spacing w:after="240"/></w:pPr></w:p>';
+      doc = doc.slice(0, bs + 8) + '{{HEADER_BLOCK}}{{INSTRUCTIONS}}' + sep + '{{QUESTIONS}}' + sect + doc.slice(be);
+      zip.file('word/document.xml', doc);
+    }
+    var heads = Object.keys(zip.files).filter(function (n) { return /^word\/header\d*\.xml$/.test(n); });
+    for (var i = 0; i < heads.length; i++) {
+      var hx = await zip.file(heads[i]).async('string');
+      if (hx.indexOf('{{') >= 0) continue;
+      hx = hx.replace(/<w:p[\s>][\s\S]*?<\/w:p>/g, function (p) {
+        var t = ptext(p); if (!t) return p;
+        if (!found.exam && /\b(mid|final|sessional|terminal|quiz|exam|examination)s?\b/i.test(t) && /\b(fall|spring|summer|winter|20\d\d)\b/i.test(t)) { found.exam = t; return setParaText(p, '{{EXAM_TITLE}}'); }
+        if (!found.dept && /^(?:department|dept\.?|faculty|school)\s+of\b/i.test(t) && t.length < 120) { found.dept = t; return setParaText(p, '{{DEPT_PREFIX}}{{DEPT}}'); }
+        if (!found.uni && /\b(universit|institute|college)/i.test(t) && t.length < 90) { found.uni = t; return setParaText(p, '{{UNIVERSITY}}'); }
+        return p;
+      });
+      zip.file(heads[i], hx);
+    }
+    // no letterhead lines in the header: put a centred title block at the top of the paper instead
+    if (!found.exam && !found.uni && !found.dept) {
+      var d2 = await zip.file('word/document.xml').async('string');
+      var tb = function (ph, sz) { return '<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="40"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="' + sz + '"/><w:szCs w:val="' + sz + '"/></w:rPr><w:t xml:space="preserve">' + ph + '</w:t></w:r></w:p>'; };
+      d2 = d2.replace('{{HEADER_BLOCK}}', tb('{{UNIVERSITY}}', 32) + tb('{{DEPT_PREFIX}}{{DEPT}}', 24) + tb('{{EXAM_TITLE}}', 24) + '{{HEADER_BLOCK}}');
+      zip.file('word/document.xml', d2); found.titleBlock = true;
+    }
+    var out = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+    return { b64: bytesToB64(out), found: found, hasHeader: heads.length > 0 };
+  }
+
   // paper = {university, deptPrefix, department, examTitle, courseTitle, courseCode, classSection, instructor,
   //          timeAllowed, maxMarks, date, instructions, questions:[...], appendCloTable, cloInfo}
   function buildPaper(paper) {
-    var qx = questionsXml(paper.questions);
+    var qx = questionsXml(paper.questions, { showPlo: paper.showPlo });
     if (paper.appendCloTable) qx += cloTableXml(paper.questions, paper.cloInfo || []);
     return fill({
       headerBlock: headerBlock(paper), instructions: instructionsBlock(paper.instructions), questions: qx,
@@ -466,12 +567,12 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       para('<w:rPr>' + CAL + '</w:rPr>', run('Generated: ', CB) + run(r.generated, C) + run('     Total questions: ', CB) + run(String(r.rows.length), C) +
         run('     Total marks: ', CB) + run(String(r.totalMarks), C));
     var rows = r.rows.map(function (q, i) {
-      var t = (q.title ? q.title : '') + (q.stem ? (q.title ? '\n' : '') + q.stem : '');
+      var t = (q.data ? '[Shared data]\n' + q.data + '\n\n' : '') + (q.title ? q.title : '') + (q.stem ? (q.title ? '\n' : '') + q.stem : '');
       (q.parts || []).forEach(function (p, pi) { t += (t ? '\n' : '') + '(' + letter(pi) + ') ' + p.text + ' (' + fmtMarks(p.marks) + ')'; });
       if (r.includeAnswers && q.answer) t += '\n\nAnswer key: ' + q.answer;
-      return [String(i + 1), (r.courseCode ? '' : (q.courseCode || '') + '\n') + t, q.cloLabels.join(', '), String(questionTotal(q)), [q.topic, q.qtype, q.difficulty].filter(Boolean).join('\n')];
+      return [String(i + 1), (r.courseCode ? '' : (q.courseCode || '') + '\n') + t, q.cloLabels.join(', ') + (q.ploLabels && q.ploLabels.length ? '\n' + ploText(q.ploLabels) : ''), String(questionTotal(q)), [q.topic, q.qtype, q.difficulty].filter(Boolean).join('\n')];
     });
-    var body = table([600, 6600, 1300, 900, 1400], ['#', 'Question', 'CLO(s)', 'Marks', 'Topic / Level'], rows);
+    var body = table([600, 6600, 1300, 900, 1400], ['#', 'Question', 'CLO / PLO', 'Marks', 'Topic / Level'], rows);
     var cloRows = (r.cloInfo || []).map(function (c) {
       var n = 0, m = 0;
       r.rows.forEach(function (q) { if (q.cloLabels.indexOf(c.label) >= 0) { n++; m += questionTotal(q); } });
@@ -484,12 +585,14 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     });
   }
 
-  window.QBDocx = { buildPaper: buildPaper, buildBankReport: buildBankReport, questionTotal: questionTotal, fmtMarks: fmtMarks, letter: letter, fmtDate: fmtDate, _esc: esc };
+  window.QBDocx = { prepareTemplate: prepareTemplate, ploText: ploText, buildPaper: buildPaper, buildBankReport: buildBankReport, questionTotal: questionTotal, fmtMarks: fmtMarks, letter: letter, fmtDate: fmtDate, _esc: esc };
 })();
 
 ;
-/* Reads questions pasted as plain text (from Word, PDF, WhatsApp, etc.) and turns them into
- * structured questions: heading, statement, parts (a)(b)..., marks and CLOs. No AI, runs locally. */
+/* Reads questions pasted or uploaded as plain text (from Word, PDF, WhatsApp, an AI, etc.) and turns them
+ * into structured questions: heading, statement, tables, parts (a)(b)..., marks, CLOs and PLOs.
+ * Tables arrive as rows like "cell | cell | cell" and are kept exactly. Data/tables printed before the first
+ * question (or "Additional information for Questions 1 and 2") are kept as shared data. Runs locally. */
 (function () {
   'use strict';
 
@@ -498,8 +601,13 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   var RE_PART = /^\s*(?:part\s*)?(?:\(\s*([a-z]|[ivx]{1,4})\s*\)|([a-z]|[ivx]{2,4})\s*[.)]\s)\s*(.*)$/i;
   var RE_NUMPART = /^\s*(?:\(\s*(\d{1,2})\s*\)|(\d{1,2})\s*[.)])\s+(.*)$/;
   var RE_ANS = /^\s*(?:ans(?:wer)?|solution|answer\s*key|key)\s*[:.\-–]\s*(.*)$/i;
-  var RE_SKIP = /^\s*(?:\(?\s*or\s*\)?|section\s+[a-z0-9]+\s*[:.\-]?.*|part\s+[ivx0-9]+\s*[:.\-]?\s*|attempt\s+(?:any|all).*|note\s*[:.].*)\s*$/i;
+  var RE_SKIP = /^\s*(?:\(?\s*or\s*\)?|section\s+[a-z0-9]+\s*[:.\-]?.*|part\s+[ivx0-9]+\s*[:.\-]?\s*|attempt\s+(?:any|all).*)\s*$/i;
+  var RE_STOP = /^\s*(?:CLO[- ]wise\s+marks.*|marks\s+distribution|answer\s+key|marking\s+scheme|solutions?)\s*:?\s*$/i;
+  var RE_PAGE = /^\s*(?:page\s+\d+(?:\s*(?:of|\/)\s*\d+)?|-\s*\d+\s*-)\s*$/i;
+  var RE_SHARED = /^\s*(?:(?:additional|supplementary|extra|further)\s+(?:information|data|details)\b|(?:exhibit|annex(?:ure)?|appendix)\b|case\s+(?:study|data)\b|data\s+for\s+questions?\b|use\s+the\s+following\s+(?:information|data)\b)/i;
+  var RE_REFERS = /\b(?:financial\s+statements?|statements?\s+(?:given|provided)\s+(?:above|on|in)|pages?\s+\d|exhibit|annex(?:ure)?|appendix|(?:table|data|information)\s+(?:given|provided)\s+above|given\s+above|provided\s+(?:above|in\s+this\s+paper|on\s+pages?))/i;
   var RE_CLO = /\bCLOs?\s*[-:#]?\s*(\d{1,2}(?:\s*(?:,|&|and|\/)\s*(?:CLO\s*[-:#]?\s*)?\d{1,2})*)/gi;
+  var RE_PLO = /\bPLOs?\s*[-:#]?\s*(\d{1,2}(?:\s*(?:,|&|and|\/)\s*(?:PLO\s*[-:#]?\s*)?\d{1,2})*)/gi;
   var MARK_PATTERNS = [
     /[\(\[]\s*(\d+(?:\.\d+)?)\s*(?:marks?|mks?|mrks?|pts?|points?|m)\s*[\)\]]/i,
     /\bmarks?\s*[:=\-]\s*(\d+(?:\.\d+)?)/i,
@@ -508,16 +616,33 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   ];
 
   function extract(s) {
-    var clos = [], marks = null;
+    var clos = [], plos = [], marks = null;
     s = s.replace(RE_CLO, function (m, nums) { (nums.match(/\d+/g) || []).forEach(function (n) { clos.push(Number(n)); }); return ' '; });
+    s = s.replace(RE_PLO, function (m, nums) { (nums.match(/\d+/g) || []).forEach(function (n) { plos.push(Number(n)); }); return ' '; });
     for (var i = 0; i < MARK_PATTERNS.length; i++) {
       var m = MARK_PATTERNS[i].exec(s);
       if (m) { marks = Number(m[1]); s = s.slice(0, m.index) + ' ' + s.slice(m.index + m[0].length); break; }
     }
-    s = s.replace(/\s{2,}/g, ' ').replace(/[\s,;:|\-–]+$/, '').replace(/^[\s,;:|\-–]+/, '').trim();
-    return { text: s, marks: marks, clos: clos };
+    s = s.replace(/[\(\[]\s*[|,;&\/]*\s*[\)\]]/g, ' ').replace(/\s{2,}/g, ' ').replace(/[\s,;:|\-–]+$/, '').replace(/^[\s,;:|\-–]+/, '').trim();
+    return { text: s, marks: marks, clos: clos, plos: plos };
   }
-
+  // A table row is "a | b | c". A heading like "(CLO 2 | PLO 1)" is not.
+  function isRow(l) {
+    if (l.indexOf('|') < 0) return false;
+    var cells = l.split('|');
+    if (cells.length === 2 && /\b(?:CLO|PLO)s?\b/i.test(l)) return false;
+    return l.replace(/[|\s]/g, '').length > 0;
+  }
+  function qNums(s) {
+    var m = /questions?\s+((?:\d{1,3}\s*(?:,|and|&|-|–|to)\s*)*\d{1,3})/i.exec(s);
+    if (!m) return [];
+    var out = [];
+    m[1].replace(/(\d+)\s*(?:-|–|to)\s*(\d+)|(\d+)/g, function (x, a, b, c) {
+      if (c) out.push(Number(c)); else for (var i = Number(a); i <= Number(b) && i - a < 30; i++) out.push(i);
+      return x;
+    });
+    return out;
+  }
   function round(n) { return Math.round(n * 2) / 2; }
 
   function parse(text, opts) {
@@ -527,46 +652,60 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       .replace(/\*\*|__|`/g, '').replace(/^[ \t]*(?:#{1,6}|>)[ \t]*/gm, '').replace(/^[ \t]*[-*][ \t]+(?=\(?[a-z]\)|Q\d)/gim, '').split('\n');
     var qStyle = lines.some(function (l) { return RE_QSTYLE.test(l); });
     var hasNumbered = qStyle || lines.some(function (l) { return RE_Q.test(l); });
-    var out = [], cur = null, part = null, mode = 'stem', ignored = 0;
-
-    function newQ(headText) {
-      var e = extract(headText || '');
-      cur = { head: e.text.replace(/\s*\|\s*/g, ' ').trim(), headMarks: e.marks, clos: e.clos.slice(), stem: [], parts: [], answer: [] };
-      out.push(cur); part = null; mode = 'stem';
-    }
+    var out = [], cur = null, part = null, mode = 'stem', pre = [], shared = [], block = null, stopped = false;
 
     if (!hasNumbered) {
       // No "Q1"/"1." markers: every block separated by a blank line is one question.
+      var qs0 = [];
       String(text || '').replace(/\r\n?/g, '\n').split(/\n\s*\n/).forEach(function (blk) {
         var t = blk.trim(); if (!t) return;
         var sub = parse('Q1. ' + t, opts).questions[0];
-        if (sub) out.push(sub);
+        if (sub) qs0.push(sub);
       });
-      return { questions: out, ignored: 0 };
+      return { questions: qs0, ignored: 0, shared: [] };
     }
 
-    var stopped = false;
+    function newQ(num, headText) {
+      var e = extract(headText || '');
+      cur = { num: num, head: e.text.replace(/\s*\|\s*/g, ' ').trim(), headMarks: e.marks, clos: e.clos.slice(), plos: e.plos.slice(), stem: [], parts: [], answer: [] };
+      out.push(cur); part = null; mode = 'stem'; block = null;
+    }
+
     lines.forEach(function (raw) {
       if (stopped) return;
-      var line = raw.replace(/\t+/g, ' ').trimEnd();
-      if (/^\s*(?:CLO[- ]wise\s+marks|marks\s+distribution|answer\s+key|marking\s+scheme|solutions?)\s*:?\s*$/i.test(line) || /^\s*CLO\s*\|\s*Description\b/i.test(line)) { stopped = true; return; }
-      if (/^\s*page\s+\d+(\s*(of|\/)\s*\d+)?\s*$/i.test(line) || /^\s*-\s*\d+\s*-\s*$/.test(line)) return;
-      if (!line.trim()) { if (part) part.text.push(''); else if (cur && mode === 'stem') cur.stem.push(''); return; }
-      var m;
-      if ((qStyle ? RE_QSTYLE.test(line) : true) && (m = RE_Q.exec(line))) { newQ(m[3]); return; }
-      if (!cur) { ignored++; return; }
+      var line = raw.replace(/\t+/g, ' ').trimEnd(), m;
+      if (RE_STOP.test(line) || /^\s*CLO\s*\|\s*Description\b/i.test(line)) { stopped = true; return; }
+      if (RE_PAGE.test(line)) return;
+      if (!line.trim()) {
+        if (!cur) { pre.push(''); return; }
+        if (mode === 'shared') block.lines.push('');
+        else if (part) part.text.push('');
+        else if (mode === 'stem') cur.stem.push('');
+        return;
+      }
+      // "Question 1 | 10 Marks (CLO 2 | PLO 1)" from a PDF looks like a table row, so Q-style headings are checked first
+      if ((qStyle ? RE_QSTYLE.test(line.split('|')[0]) : !isRow(line)) && (m = RE_Q.exec(line))) { newQ(Number(m[1] || m[2]), m[3]); return; }
+      if (!cur) { pre.push(line); return; }
+      if (RE_SHARED.test(line) && !isRow(line)) {
+        block = { targets: qNums(line), lines: [line.trim()] }; shared.push(block); mode = 'shared'; part = null; return;
+      }
+      if (mode === 'shared') { block.lines.push(isRow(line) ? line : line.trim()); return; }
       if ((m = RE_ANS.exec(line))) { mode = 'answer'; part = null; if (m[1]) cur.answer.push(m[1]); return; }
       if (RE_SKIP.test(line) && line.trim().length < 60) return;
       if ((m = RE_PART.exec(line)) || (qStyle && (m = RE_NUMPART.exec(line)))) {
         var e = extract(m[3] || '');
         part = { text: [e.text.replace(/\s*\|\s*/g, ' ').trim()], marks: e.marks }; cur.parts.push(part); mode = 'part';
-        e.clos.forEach(function (c) { cur.clos.push(c); });
+        e.clos.forEach(function (c) { cur.clos.push(c); }); e.plos.forEach(function (c) { cur.plos.push(c); });
         return;
       }
       if (mode === 'answer') { cur.answer.push(line.trim()); return; }
+      if (isRow(line)) { (part ? part.text : cur.stem).push(line); return; } // tables kept exactly
       var e2 = extract(line.trim());
-      e2.clos.forEach(function (c) { cur.clos.push(c); });
+      e2.clos.forEach(function (c) { cur.clos.push(c); }); e2.plos.forEach(function (c) { cur.plos.push(c); });
       if (part) {
+        var prev = part.text.join(' ').trim();
+        // a new full sentence after a finished part = new paragraph that belongs to the question, not the part
+        if (/[.?!)]$/.test(prev) && /^[A-Z]/.test(e2.text) && e2.text.length > 40) { cur.stem.push(e2.text); return; }
         part.text.push(e2.text);
         if (e2.marks != null && part.marks == null) part.marks = e2.marks;
       } else {
@@ -576,14 +715,12 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     });
 
     var qs = out.map(function (q) {
-      if (q.final) return q;
       var stem = q.stem.join('\n').replace(/\n{3,}/g, '\n\n').trim();
       var parts = q.parts.map(function (p) { return { text: p.text.join('\n').replace(/\n{2,}/g, '\n').trim(), marks: p.marks }; })
         .filter(function (p) { return p.text; });
       var title = '', head = q.head || '';
       if (head && (head.length > 90 || /\?\s*$/.test(head) || (!parts.length && !stem))) { stem = head + (stem ? '\n' + stem : ''); }
       else title = head;
-      // marks: fill the gaps
       if (parts.length) {
         var known = 0, unknown = 0;
         parts.forEach(function (p) { if (p.marks != null) known += p.marks; else unknown++; });
@@ -592,17 +729,43 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
           parts.forEach(function (p) { if (p.marks == null) p.marks = each; });
         }
       }
+      var uniq = function (a) { return Array.from(new Set(a)).sort(function (x, y) { return x - y; }); };
       return {
-        final: true, title: title, stem: stem, parts: parts,
+        num: q.num, title: title, stem: stem, parts: parts, data: '',
         marks: parts.length ? 0 : (q.headMarks != null ? q.headMarks : def),
-        cloNums: Array.from(new Set(q.clos)).sort(function (a, b) { return a - b; }),
-        answer: q.answer.join('\n').trim()
+        cloNums: uniq(q.clos), ploNums: uniq(q.plos), answer: q.answer.join('\n').trim()
       };
     }).filter(function (q) { return q.title || q.stem || q.parts.length; });
-    return { questions: qs, ignored: ignored };
+
+    // ---- shared data: tables/text before the first question + "Additional information ..." blocks ----
+    var sharedOut = [], mode2 = opts.sharedMode || 'auto';
+    var firstRow = pre.findIndex(isRow), preText = '';
+    if (firstRow >= 0) {
+      var st = firstRow;
+      while (st > 0 && pre[st - 1].trim() && pre[st - 1].trim().length < 100 && !/^\s*\d+[.)]\s/.test(pre[st - 1]) && !/instruction|note\s*:/i.test(pre[st - 1])) st--;
+      preText = pre.slice(st).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    }
+    var blocks = [];
+    if (preText) blocks.push({ text: preText, targets: [] , where: 'before Question ' + (qs[0] ? qs[0].num || 1 : 1) });
+    shared.forEach(function (b) { var t = b.lines.join('\n').replace(/\n{3,}/g, '\n\n').trim(); if (t) blocks.push({ text: t, targets: b.targets, where: 'after the questions' }); });
+    if (mode2 !== 'none' && qs.length) {
+      blocks.forEach(function (b) {
+        var targets;
+        if (mode2 === 'all') targets = qs;
+        else if (mode2 === 'first') targets = [qs[0]];
+        else {
+          targets = b.targets.length ? qs.filter(function (q) { return b.targets.indexOf(q.num) >= 0; })
+            : qs.filter(function (q) { return RE_REFERS.test(q.title + ' ' + q.stem + ' ' + q.parts.map(function (p) { return p.text; }).join(' ')); });
+          if (!targets.length) targets = [qs[0]];
+        }
+        targets.forEach(function (q) { q.data = q.data ? q.data + '\n\n' + b.text : b.text; });
+        sharedOut.push({ where: b.where, rows: b.text.split('\n').filter(isRow).length, to: targets.map(function (q) { return q.num; }) });
+      });
+    }
+    return { questions: qs, ignored: firstRow >= 0 ? firstRow : pre.filter(function (l) { return l.trim(); }).length, shared: sharedOut };
   }
 
-  window.QBPaste = { parse: parse };
+  window.QBPaste = { parse: parse, isRow: isRow };
 })();
 
 ;
@@ -767,7 +930,11 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   function extract(text) {
     var lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
     var clos = {}, topics = [], table = null, inTopics = false, inClos = false, cloSeq = 0, lastClo = null;
-    function addClo(n, d) { d = clean(d); if (n && d && d.length > 5 && (!clos[n] || clos[n].length < d.length)) clos[n] = d.slice(0, 600); }
+    var cloPlo = {};
+    function addClo(n, d, row) {
+      d = clean(d); if (n && d && d.length > 5 && (!clos[n] || clos[n].length < d.length)) clos[n] = d.slice(0, 600);
+      if (n && row) { var p = []; String(row).replace(/PLO\s*[-#.]?\s*(\d{1,2}(?:\s*(?:,|&|and|\/)\s*\d{1,2})*)/gi, function (m, g) { p = p.concat(nums(g)); return m; }); if (p.length) cloPlo[n] = Array.from(new Set((cloPlo[n] || []).concat(p))); }
+    }
     function addTopic(w, t, cl) {
       t = clean(t.replace(/CLO\s*[-#.]?\s*\d{1,2}(?:\s*(?:,|&|and|\/)\s*\d{1,2})*/gi, '').replace(/\(\s*\)|\[\s*\]/g, ''));
       if (!t || t.length < 3 || /^(topics?|contents?|week|lecture|description)$/i.test(t)) return;
@@ -784,7 +951,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         else if (line.indexOf('|') >= 0) {
           var cs = line.split('|').map(function (c) { return c.trim(); });
           var nn = nums(cs[0])[0], longest = cs.slice().sort(function (a, b) { return b.length - a.length; })[0];
-          if (nn && longest.length > 15) { addClo(nn, longest); lastClo = nn; cloSeq = Math.max(cloSeq, nn); return; }
+          if (nn && longest.length > 15) { addClo(nn, longest, line); lastClo = nn; cloSeq = Math.max(cloSeq, nn); return; }
           if (!/\d/.test(line) && /desc|outcome|statement|clo/i.test(line)) return; // header row
           if (longest.length > 15 && RE_VERB.test(longest)) { cloSeq++; addClo(cloSeq, longest); lastClo = cloSeq; return; }
         } else if ((mm = RE_ITEM.exec(line))) {
@@ -811,12 +978,12 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         var cc = cells.findIndex(function (c) { return /^CLO\s*[-#.]?\s*\d{1,2}\s*[:.\-\u2013]?$/i.test(c); });
         if (cc >= 0 && (!table || table.kind !== 'week')) {
           var longest = cells.filter(function (c, i) { return i !== cc; }).sort(function (a, b) { return b.length - a.length; })[0];
-          addClo(nums(cells[cc])[0], longest); return;
+          addClo(nums(cells[cc])[0], longest, line); return;
         }
         if (cells[0] && RE_CLO.test(cells[0])) { var m0 = RE_CLO.exec(cells[0]); addClo(Number(m0[1]), m0[2]); return; }
         if (table && table.kind === 'clo') {
           var n = nums(cells[table.ci] || cells[0])[0], d = table.di >= 0 ? cells[table.di] : cells.slice().sort(function (a, b) { return b.length - a.length; })[0];
-          if (n) addClo(n, d); return;
+          if (n) addClo(n, d, line); return;
         }
         if (table && table.kind === 'week') {
           var w = nums(cells[table.wi])[0] || null, t = cells[table.ti] || '';
@@ -842,7 +1009,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       byKey[k] = t; merged.push(t);
     });
     return {
-      clos: Object.keys(clos).map(Number).sort(function (a, b) { return a - b; }).map(function (n) { return { num: n, desc: clos[n] }; }),
+      clos: Object.keys(clos).map(Number).sort(function (a, b) { return a - b; }).map(function (n) { return { num: n, desc: clos[n], plos: cloPlo[n] || [] }; }),
       topics: merged.slice(0, 120)
     };
   }
@@ -932,6 +1099,11 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     return c.clos.filter(function (x) { return q.clos.indexOf(x.id) >= 0; }).map(function (x) { return x.label; });
   }
   function total(q) { return D.questionTotal(q); }
+  function ploLabels(q) {
+    var c = course(q.courseId); if (!c || !q.plos) return [];
+    return (c.plos || []).filter(function (x) { return q.plos.indexOf(x.id) >= 0; }).map(function (x) { return x.label; });
+  }
+  function findLab(list, lab) { var k = lab.replace(/\s+/g, '').toUpperCase(); return list.find(function (y) { return y.label.replace(/\s+/g, '').toUpperCase() === k; }); }
   function round(n) { return Math.round(n * 100) / 100; }
   // ----- course outline topics -----
   function norm(t) { return String(t || '').trim().toLowerCase().replace(/\s+/g, ' '); }
@@ -1054,7 +1226,8 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
   function questionBody(q) {
     var frag = h('div', { class: 'qbody' });
-    if (q.stem) frag.append(h('p', { class: 'stem', text: q.stem }));
+    if (q.data) frag.append(h('details', { class: 'qdata' }, h('summary', { text: '\ud83d\udcca Shared data / tables (' + q.data.split('\n').filter(function (l) { return l.indexOf('|') >= 0; }).length + ' table rows)' }), stemPreview(q.data, (q.dataLines || data.paper.dataLines) === 'none')));
+    if (q.stem) frag.append(stemPreview(q.stem));
     if (q.parts.length) frag.append(h('ol', { class: 'parts' }, q.parts.map(function (p, i) {
       return h('li', null, h('span', { class: 'pl', text: '(' + D.letter(i) + ')' }), ' ', p.text, h('span', { class: 'pm', text: ' (' + D.fmtMarks(p.marks) + ')' }));
     })));
@@ -1067,6 +1240,8 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       h('span', { class: 'badge marks', text: D.fmtMarks(total(q)) }),
       cloLabels(q).map(function (l) { return h('span', { class: 'badge clo', text: l }); }),
       q.clos.length ? null : h('span', { class: 'badge warn', text: 'No CLO' }),
+      ploLabels(q).length ? h('span', { class: 'badge plo', text: D.ploText(ploLabels(q)) }) : null,
+      q.data ? h('span', { class: 'badge data', text: 'Shared data' }) : null,
       q.qtype ? h('span', { class: 'badge', text: q.qtype }) : null,
       q.difficulty ? h('span', { class: 'badge diff-' + q.difficulty.toLowerCase(), text: q.difficulty }) : null,
       q.topic ? (function () { var c = course(q.courseId), t = topicOf(c, q.topic); return h('span', { class: 'badge topic', title: t ? topicLong(c, t) : 'Topic', text: (t && t.week ? 'W' + t.week + ' \u00b7 ' : '') + q.topic }); })() : null,
@@ -1118,8 +1293,9 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('qType').value = src.qtype; $('qDiff').value = src.difficulty; $('qTopic').value = src.topic; $('qAnswer').value = src.answer || '';
     draftParts = src.parts.map(function (p) { return { id: p.id, text: p.text, marks: p.marks }; });
     if (!q && !draftParts.length) draftParts = [{ text: '', marks: 1 }];
-    draftClos = src.clos.slice();
-    fillTopicList();
+    draftClos = src.clos.slice(); draftPlos = (src.plos || []).slice();
+    $('qData').value = src.data || ''; $('qDataWrap').open = !!src.data; $('qDataLines').value = src.dataLines || ''; $('qTableLines').value = src.tableLines || ''; $('qNewPlo').value = '';
+    fillTopicList(); renderQPlos();
     $('qErr').textContent = ''; $('qNewClo').value = '';
     renderQClos(); renderQParts(); $('qDlg').showModal(); $('qTitle').focus();
   }
@@ -1133,13 +1309,25 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     if (t && !draftClos.length && t.clos.length) { draftClos = t.clos.slice(); renderQClos(); }
     topicInfo($('qTopicInfo'), c, $('qTopic').value);
   }
+  var draftPlos = [];
+  function renderQPlos() {
+    var c = course($('qCourse').value), box = clear($('qPlos'));
+    if (!c || !(c.plos || []).length) box.append(h('span', { class: 'muted small', text: 'No PLOs for this course yet \u2014 add one below or in Courses & CLOs.' }));
+    (c ? c.plos || [] : []).forEach(function (x) {
+      var on = draftPlos.indexOf(x.id) >= 0;
+      box.append(h('button', { type: 'button', class: 'chip' + (on ? ' on' : ''), title: x.desc, text: x.label, onclick: function () {
+        if (on) draftPlos = draftPlos.filter(function (y) { return y !== x.id; }); else draftPlos.push(x.id); renderQPlos();
+      } }));
+    });
+  }
   function renderQClos() {
     var c = course($('qCourse').value), box = clear($('qClos'));
     if (!c || !c.clos.length) box.append(h('span', { class: 'muted small', text: 'This course has no CLOs yet — add one below.' }));
     (c ? c.clos : []).forEach(function (x) {
       var on = draftClos.indexOf(x.id) >= 0;
       box.append(h('button', { type: 'button', class: 'chip' + (on ? ' on' : ''), title: x.desc, text: x.label, onclick: function () {
-        if (on) draftClos = draftClos.filter(function (y) { return y !== x.id; }); else draftClos.push(x.id);
+        if (on) draftClos = draftClos.filter(function (y) { return y !== x.id; });
+        else { draftClos.push(x.id); (x.plos || []).forEach(function (p) { if (draftPlos.indexOf(p) < 0) draftPlos.push(p); }); renderQPlos(); }
         renderQClos();
       } }));
     });
@@ -1167,7 +1355,8 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     ev.preventDefault();
     var parts = draftParts.filter(function (p) { return String(p.text).trim(); });
     var q = S.cleanQuestion({
-      id: editing ? editing.id : '', courseId: $('qCourse').value, title: $('qTitle').value.trim(), stem: $('qStem').value.trim(),
+      id: editing ? editing.id : '', courseId: $('qCourse').value, title: $('qTitle').value.trim(), stem: $('qStem').value.trim(), data: $('qData').value.trim(), dataLines: $('qDataLines').value, tableLines: $('qTableLines').value,
+      plos: draftPlos.filter(function (id) { var c = course($('qCourse').value); return c && (c.plos || []).some(function (x) { return x.id === id; }); }),
       parts: parts, marks: $('qMarks').value, clos: draftClos.filter(function (id) { var c = course($('qCourse').value); return c && c.clos.some(function (x) { return x.id === id; }); }),
       qtype: $('qType').value, difficulty: $('qDiff').value, topic: $('qTopic').value.trim(), answer: $('qAnswer').value.trim(),
       createdAt: editing ? editing.createdAt : '', updatedAt: new Date().toISOString()
@@ -1182,7 +1371,16 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
 
   // ---------- COURSES ----------
-  var editingCourse = null, draftCClos = [];
+  var editingCourse = null, draftCClos = [], draftCPlos = [];
+  function renderCPlos() {
+    var box = clear($('cPlos'));
+    if (!draftCPlos.length) box.append(h('p', { class: 'muted small', text: 'No PLOs yet. They are optional.' }));
+    draftCPlos.forEach(function (x, i) {
+      var lb = h('input', { class: 'clo-label', maxlength: 30, value: x.label, 'aria-label': 'PLO label', oninput: function () { x.label = lb.value; } });
+      var ds = h('textarea', { rows: 1, maxlength: 600, placeholder: 'PLO description (optional)', value: x.desc, oninput: function () { x.desc = ds.value; } });
+      box.append(h('div', { class: 'plo-row' }, lb, ds, h('button', { type: 'button', class: 'icon danger-t', title: 'Remove PLO', text: '\u2715', onclick: function () { draftCPlos.splice(i, 1); renderCPlos(); } })));
+    });
+  }
   function renderCourses() {
     var box = clear($('courseList'));
     if (!data.courses.length) box.append(h('div', { class: 'empty', text: 'No courses yet. Add your first course and its CLOs.' }));
@@ -1194,6 +1392,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
           var cnt = data.questions.filter(function (q) { return q.clos.indexOf(x.id) >= 0; }).length;
           return h('li', null, h('b', { text: x.label }), ' ', x.desc || '', h('span', { class: 'muted small', text: '  · ' + cnt + ' q' }));
         })) : h('p', { class: 'muted small', text: 'No CLOs defined.' }),
+        (c.plos || []).length ? h('p', { class: 'small' }, h('b', { text: 'PLOs: ' }), (c.plos || []).map(function (x) { return h('span', { class: 'badge plo', title: x.desc, text: x.label }); })) : null,
         outlineBox(c),
         h('div', { class: 'qactions' },
           h('button', { class: 'btn small', text: 'Edit course & CLOs', onclick: function () { openCourse(c); } }),
@@ -1254,7 +1453,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var c = outlineTarget, r = window.QBOutline.extract($('oText').value), box = clear($('oClos'));
     outlineFound = r.clos.map(function (x) {
       var lab = 'CLO ' + x.num, ex = c.clos.find(function (y) { return norm(y.label).replace(/\s/g, '') === lab.toLowerCase().replace(' ', ''); });
-      return { label: lab, desc: x.desc, existing: ex, on: !ex || !ex.desc };
+      return { label: lab, desc: x.desc, existing: ex, on: !ex || !ex.desc, plos: x.plos || [] };
     });
     if (!outlineFound.length) box.append(h('p', { class: 'small muted', text: 'No CLOs found in this text. You can still add them in \u201cEdit course & CLOs\u201d.' }));
     outlineFound.forEach(function (f) {
@@ -1275,7 +1474,12 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       if (!f.on || !f.desc.trim()) return;
       var ex = findClo(f.label);
       if (ex) { if (!ex.desc || $('oReplace').checked) ex.desc = f.desc.trim().slice(0, 600); }
-      else c.clos.push({ id: S.newId(), label: f.label, desc: f.desc.trim().slice(0, 600) });
+      else { ex = { id: S.newId(), label: f.label, desc: f.desc.trim().slice(0, 600) }; c.clos.push(ex); }
+      if (f.plos && f.plos.length) {
+        c.plos = c.plos || [];
+        ex.plos = f.plos.map(function (n) { var p = findLab(c.plos, 'PLO ' + n); if (!p) { p = { id: S.newId(), label: 'PLO ' + n, desc: '' }; c.plos.push(p); } return p.id; });
+        c.plos.sort(function (a, b) { return a.label.localeCompare(b.label, undefined, { numeric: true }); });
+      }
     });
     c.topics = window.QBOutline.textToTopics($('oTopics').value).slice(0, 150).map(function (t) {
       return { id: S.newId(), week: t.week, title: t.title, clos: t.cloNums.map(function (n) {
@@ -1293,8 +1497,9 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     editingCourse = c || null;
     $('cDlgTitle').textContent = c ? 'Edit course' : 'New course';
     $('cCode').value = c ? c.code : ''; $('cTitle').value = c ? c.title : '';
-    draftCClos = c ? c.clos.map(function (x) { return { id: x.id, label: x.label, desc: x.desc }; }) : [{ id: S.newId(), label: 'CLO 1', desc: '' }];
-    $('cErr').textContent = ''; renderCClos(); $('cDlg').showModal(); $('cCode').focus();
+    draftCClos = c ? c.clos.map(function (x) { return { id: x.id, label: x.label, desc: x.desc, plos: (x.plos || []).slice() }; }) : [{ id: S.newId(), label: 'CLO 1', desc: '' }];
+    draftCPlos = c ? (c.plos || []).map(function (x) { return { id: x.id, label: x.label, desc: x.desc }; }) : [];
+    $('cErr').textContent = ''; renderCClos(); renderCPlos(); $('cDlg').showModal(); $('cCode').focus();
   }
   function renderCClos() {
     var box = clear($('cClos'));
@@ -1314,12 +1519,14 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     if (!code || !title) { $('cErr').textContent = 'Course code and title are required.'; return; }
     if (data.courses.some(function (c) { return c !== editingCourse && c.code.toLowerCase() === code.toLowerCase(); })) { $('cErr').textContent = 'A course with this code already exists.'; return; }
     var clos = draftCClos.filter(function (x) { return x.label.trim(); });
-    var c = S.cleanCourse({ id: editingCourse ? editingCourse.id : '', code: code, title: title, clos: clos,
+    var plos = draftCPlos.filter(function (x) { return x.label.trim(); }), plKeep = {}; plos.forEach(function (x) { plKeep[x.id] = 1; });
+    clos.forEach(function (x) { x.plos = (x.plos || []).filter(function (id) { return plKeep[id]; }); });
+    var c = S.cleanCourse({ id: editingCourse ? editingCourse.id : '', code: code, title: title, clos: clos, plos: plos,
       topics: editingCourse ? editingCourse.topics.map(function (t) { return Object.assign({}, t, { clos: t.clos.filter(function (id) { return clos.some(function (x) { return x.id === id; }); }) }); }) : [],
       outline: editingCourse ? editingCourse.outline : null });
     if (editingCourse) {
       var keep = {}; c.clos.forEach(function (x) { keep[x.id] = 1; });
-      data.questions.forEach(function (q) { if (q.courseId === c.id) q.clos = q.clos.filter(function (id) { return keep[id]; }); });
+      data.questions.forEach(function (q) { if (q.courseId === c.id) { q.clos = q.clos.filter(function (id) { return keep[id]; }); q.plos = (q.plos || []).filter(function (id) { return plKeep[id]; }); } });
       data.courses[data.courses.indexOf(editingCourse)] = c;
     } else data.courses.push(c);
     $('cDlg').close(); changed(); render(); toast('Course saved.');
@@ -1342,7 +1549,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('pTime').value = known ? p.timeAllowed : '__custom';
     $('pTimeCustom').classList.toggle('hidden', known); $('pTimeCustom').value = known ? '' : p.timeAllowed;
     $('pStart').value = p.examTime; $('pDate').value = p.date; $('pMax').value = p.maxMarksOverride; $('pInstr').value = p.instructions;
-    $('pCloTable').checked = p.appendCloTable;
+    $('pCloTable').checked = p.appendCloTable; $('pShowPlo').checked = p.showPlo !== false; $('pDataLines').value = p.dataLines || 'none'; $('pStemLines').value = p.stemLines || 'lines';
     renderPaperLists(); renderRG();
   }
   function renderPaperLists() {
@@ -1400,20 +1607,22 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       courseTitle: p.courseTitle || c.title, courseCode: p.courseCode || c.code, examTime: fmtTime(p.examTime), classSection: p.classSection, instructor: p.instructor, timeAllowed: p.timeAllowed,
       date: p.date, maxMarks: p.maxMarksOverride === '' || qsOverride ? sum : p.maxMarksOverride, instructions: p.instructions,
       appendCloTable: p.appendCloTable, cloInfo: c.clos.map(function (x) { return { label: x.label, desc: x.desc }; }),
-      questions: qs.map(function (q) { return { title: q.title, stem: q.stem, parts: q.parts, marks: q.marks, cloLabels: cloLabels(q) }; })
+      showPlo: p.showPlo !== false,
+      questions: qs.map(function (q) { return { title: q.title, stem: q.stem, data: q.data || '', parts: q.parts, marks: q.marks, cloLabels: cloLabels(q), ploLabels: ploLabels(q),
+        tableLines: q.tableLines || p.stemLines || 'lines', dataLines: q.dataLines || p.dataLines || 'none' }; })
     };
   }
-  function stemPreview(stem) { // mirrors docx: lines with "|" become a table
+  function stemPreview(stem, noLines) { // mirrors docx: lines with "|" become a table
     var wrap = h('div'), buf = [], lines = stem.split('\n'), i = 0;
     var isRow = function (l) { return l.indexOf('|') >= 0 && l.replace(/[|\s]/g, '') !== ''; };
     var isSep = function (l) { return /^\s*\|?\s*:?-{2,}/.test(l) && /^[\s|:-]+$/.test(l); };
-    var cells = function (l) { return l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (c) { return c.trim(); }); };
+    var cells = function (l) { var t = l.trim(); if (t.charAt(0) === '|' && t.charAt(t.length - 1) === '|' && t.length > 1) t = t.slice(1, -1); return t.split('|').map(function (c) { return c.trim(); }); };
     var flush = function () { if (buf.length) { wrap.append(h('p', { class: 'stem', text: buf.join('\n') })); buf = []; } };
     while (i < lines.length) {
       if (isRow(lines[i]) && i + 1 < lines.length && (isRow(lines[i + 1]) || isSep(lines[i + 1]))) {
         flush(); var rows = [];
         while (i < lines.length && (isRow(lines[i]) || isSep(lines[i]))) { if (!isSep(lines[i])) rows.push(cells(lines[i])); i++; }
-        wrap.append(h('table', { class: 'pv-table' }, rows.map(function (r, ri) { return h('tr', null, r.map(function (c) { return h(ri ? 'td' : 'th', { text: c }); })); })));
+        wrap.append(h('table', { class: 'pv-table' + (noLines ? ' nolines' : '') }, rows.map(function (r, ri) { return h('tr', null, r.map(function (c) { return h(ri ? 'td' : 'th', { text: c }); })); })));
       } else if (!lines[i].trim()) { flush(); i++; } else { buf.push(lines[i]); i++; }
     }
     flush(); return wrap;
@@ -1431,10 +1640,17 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         h('span', null, h('b', { text: 'Student’s Name:' }), ' _____________________'), h('span', null, h('b', { text: 'Moderated by:' }), ' ________________')),
       h('p', null, h('b', null, h('u', { text: 'Note/ Instructions:' }), ' '), m.instructions ? m.instructions : h('b', { text: '(if Any)' })),
       h('hr', { class: 'pv-dots' }));
+    var pvPrinted = {};
     m.questions.forEach(function (q, i) {
+      if (q.data && !pvPrinted[q.data]) {
+        pvPrinted[q.data] = 1;
+        var us = []; m.questions.forEach(function (x, k) { if (x.data === q.data) us.push(k + 1); });
+        box.append(h('div', { class: 'pv-data' }, h('p', null, h('b', { text: 'Use the following information for Question' + (us.length > 1 ? 's ' + us.slice(0, -1).join(', ') + ' and ' + us[us.length - 1] : ' ' + us[0]) + ':' })), stemPreview(q.data, q.dataLines === 'none')));
+      }
+      var rt = '(' + D.fmtMarks(total(q)) + ')  ' + [q.cloLabels.join(', '), m.showPlo ? D.ploText(q.ploLabels) : ''].filter(Boolean).join(' | ');
       box.append(h('div', { class: 'pv-q' },
-        h('div', { class: 'pv-qh' }, h('b', { text: 'Q' + (i + 1) + '. ' + (q.title || '') }), h('b', { text: '(' + D.fmtMarks(total(q)) + ')  ' + q.cloLabels.join(', ') })),
-        q.stem ? stemPreview(q.stem) : null,
+        h('div', { class: 'pv-qh' }, h('b', { text: 'Q' + (i + 1) + '. ' + (q.title || '') }), h('b', { text: rt })),
+        q.stem ? stemPreview(q.stem, q.tableLines === 'none') : null,
         q.parts.map(function (p, pi) { return h('p', { text: '(' + D.letter(pi) + ') ' + p.text + ' (' + D.fmtMarks(p.marks) + ')' }); })));
     });
     box.append(h('p', { class: 'pv-foot', text: 'Page 1 of …' }));
@@ -1625,6 +1841,12 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     psCandidates = []; renderPaste(); $('psMsg').textContent = '';
     $('psDlg').showModal(); $('psText').focus();
   }
+  function mapPlos(c, nums, added) {
+    c.plos = c.plos || [];
+    var res = (nums || []).map(function (n) { var p = findLab(c.plos, 'PLO ' + n); if (!p) { p = { id: S.newId(), label: 'PLO ' + n, desc: '' }; c.plos.push(p); added.push('PLO ' + n); } return p.id; });
+    c.plos.sort(function (a, b) { return a.label.localeCompare(b.label, undefined, { numeric: true }); });
+    return res;
+  }
   function fromPasted(r, c, qtype) {
     var added = [];
     var qs = r.questions.map(function (pq) {
@@ -1634,7 +1856,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         if (!x) { x = { id: S.newId(), label: lab, desc: '' }; c.clos.push(x); added.push(lab); }
         return x.id;
       });
-      return S.cleanQuestion({ courseId: c.id, title: pq.title, stem: pq.stem, parts: pq.parts, marks: pq.marks, clos: ids, answer: pq.answer, qtype: qtype || '' });
+      return S.cleanQuestion({ courseId: c.id, title: pq.title, stem: pq.stem, data: pq.data, parts: pq.parts, marks: pq.marks, clos: ids, plos: mapPlos(c, pq.ploNums, added), answer: pq.answer, qtype: qtype || '' });
     });
     if (added.length) { c.clos.sort(function (a, b) { return a.label.localeCompare(b.label, undefined, { numeric: true }); }); changed(); }
     return { qs: qs, added: added };
@@ -1642,7 +1864,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   function readPaste() {
     var c = course($('psCourse').value), msg = $('psMsg');
     if (!c) return;
-    var r = window.QBPaste.parse($('psText').value, { defaultMarks: $('psMarks').value });
+    var r = window.QBPaste.parse($('psText').value, { defaultMarks: $('psMarks').value, sharedMode: $('psShared').value });
     var added = [];
     psCandidates = r.questions.map(function (pq) {
       var ids = pq.cloNums.map(function (n) {
@@ -1651,12 +1873,13 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         if (!x) { x = { id: S.newId(), label: lab, desc: '' }; c.clos.push(x); added.push(lab); }
         return x.id;
       });
-      return { on: true, q: S.cleanQuestion({ courseId: c.id, title: pq.title, stem: pq.stem, parts: pq.parts, marks: pq.marks, clos: ids, answer: pq.answer, qtype: $('psType').value }) };
+      return { on: true, q: S.cleanQuestion({ courseId: c.id, title: pq.title, stem: pq.stem, data: pq.data, parts: pq.parts, marks: pq.marks, clos: ids, plos: mapPlos(c, pq.ploNums, added), answer: pq.answer, qtype: $('psType').value }) };
     });
     if (added.length) { c.clos.sort(function (a, b) { return a.label.localeCompare(b.label, undefined, { numeric: true }); }); changed(); }
     msg.className = 'small ' + (psCandidates.length ? 'ok' : 'err');
     msg.textContent = psCandidates.length ? psCandidates.length + ' question(s) found' + (r.ignored ? ' (' + r.ignored + ' header line(s) skipped)' : '') +
-      (added.length ? '. New CLOs added to the course: ' + added.join(', ') + ' (add their descriptions in Courses & CLOs)' : '') + '. Check them, untick any you don\u2019t want, then click Add to bank.' : 'No questions found. Start each question with Q1., Q2. or 1., 2.';
+      (added.length ? '. Added to the course: ' + added.join(', ') + ' (add their descriptions in Courses & CLOs)' : '') +
+      (r.shared && r.shared.length ? '. Shared data kept: ' + r.shared.map(function (b) { return b.rows + ' table rows ' + b.where + ' \u2192 Q' + b.to.join(', Q'); }).join('; ') : '') + '. Check them, untick any you don\u2019t want, then click Add to bank.' : 'No questions found. Start each question with Q1., Q2. or 1., 2.';
     renderPaste();
   }
   function renderPaste() {
@@ -1868,6 +2091,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('removePw').disabled = !keyInfo; $('autoLock').value = String(data.settings.autoLockMin); $('autoLock').disabled = !keyInfo;
     $('aiKey').value = ''; $('aiKey').placeholder = data.settings.ai.geminiKey ? 'Key saved (…' + data.settings.ai.geminiKey.slice(-4) + ') — paste to replace' : 'Paste Gemini API key';
     $('aiModel').value = data.settings.ai.model;
+    renderTplState();
     $('sUni').value = data.settings.university; $('sDeptPrefix').value = data.settings.deptPrefix; $('sDept').value = data.settings.department;
   }
   async function refreshLinkState() {
@@ -1952,6 +2176,32 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     toast('Password removed. Data is stored unencrypted on this PC.');
   }
 
+  // ---------- paper template ----------
+  var tplInfo = null;
+  async function loadTemplate() {
+    var t = await S.getTemplate();
+    tplInfo = t && t.b64 ? t : null;
+    window.QB_CUSTOM_TEMPLATE_B64 = tplInfo ? tplInfo.b64 : null;
+  }
+  function renderTplState() {
+    var el = $('tplState');
+    el.textContent = tplInfo ? '\u2713 Using your template: ' + tplInfo.name + (tplInfo.at ? ' (added ' + new Date(tplInfo.at).toLocaleDateString() + ')' : '') : 'Using the default DHA Suffa University template.';
+    $('tplReset').disabled = !tplInfo;
+  }
+  async function uploadTemplate(file) {
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) return toast('That file is too large (max 20 MB).', 'err');
+    try {
+      var r = await D.prepareTemplate(await file.arrayBuffer());
+      tplInfo = { name: file.name, b64: r.b64, at: new Date().toISOString() };
+      await S.setTemplate(tplInfo); window.QB_CUSTOM_TEMPLATE_B64 = r.b64;
+      if (r.found.uni) { data.settings.university = r.found.uni; data.paper.university = ''; }
+      if (r.found.dept) { data.settings.deptPrefix = ''; data.settings.department = r.found.dept; data.paper.department = ''; }
+      changed(); render();
+      toast('Template saved: ' + file.name + '. ' + (r.found.titleBlock ? 'No letterhead was found in its header, so the university, department and exam title are printed at the top of the page.' : 'Header lines found and linked to Paper Builder.') + ' Download a paper to check it.');
+    } catch (e) { toast(e.message, 'err'); }
+  }
+
   // ---------- auto-lock ----------
   var lockTimer = null;
   function armAutoLock() {
@@ -2001,6 +2251,25 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('uploadPaperBank').addEventListener('click', function () { uploadToPaper = false; $('paperFile').value = ''; $('paperFile').click(); });
     $('uploadPaper').addEventListener('click', function () { uploadToPaper = true; $('paperFile').value = ''; $('paperFile').click(); });
     $('paperFile').addEventListener('change', function (e) { uploadPaperFile(e.target.files[0]); });
+    $('tplUpload').addEventListener('click', function () { $('tplFile').value = ''; $('tplFile').click(); });
+    $('tplFile').addEventListener('change', function (e) { uploadTemplate(e.target.files[0]); });
+    $('tplDownload').addEventListener('click', function () {
+      var b = Uint8Array.from(atob(window.QB_CUSTOM_TEMPLATE_B64 || window.QB_TEMPLATE_DOCX_B64), function (ch) { return ch.charCodeAt(0); });
+      S.download(new Blob([b], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), tplInfo ? 'Template_' + tplInfo.name : 'Default_Paper_Template.docx');
+    });
+    $('tplReset').addEventListener('click', async function () {
+      if (!confirm('Go back to the default DHA Suffa University template?')) return;
+      await S.clearTemplate(); tplInfo = null; window.QB_CUSTOM_TEMPLATE_B64 = null; renderTplState(); toast('Default template restored.');
+    });
+    $('qAddPlo').addEventListener('click', function () {
+      var c = course($('qCourse').value), d = $('qNewPlo').value.trim(); if (!c || !d) return;
+      c.plos = c.plos || [];
+      var mm = /^PLO\s*-?\s*(\d+)\s*[:.\-]?\s*(.*)$/i.exec(d);
+      var nx = mm ? { id: S.newId(), label: 'PLO ' + mm[1], desc: mm[2] || '' } : { id: S.newId(), label: 'PLO ' + (c.plos.length + 1), desc: d.slice(0, 600) };
+      var ex = findLab(c.plos, nx.label); if (ex) nx = ex; else c.plos.push(nx);
+      if (draftPlos.indexOf(nx.id) < 0) draftPlos.push(nx.id); $('qNewPlo').value = ''; changed(); renderQPlos();
+    });
+    $('cAddPlo').addEventListener('click', function () { draftCPlos.push({ id: S.newId(), label: 'PLO ' + (draftCPlos.length + 1), desc: '' }); renderCPlos(); });
     $('fTopic').addEventListener('change', function (e) { filt.topic = e.target.value; renderBank(); });
     $('oFile').addEventListener('change', function (e) { outlineFromFile(e.target.files[0]); });
     $('oRead').addEventListener('click', readOutline);
@@ -2032,7 +2301,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     // question dialog
     $('qForm').addEventListener('submit', saveQuestion);
     $('qCancel').addEventListener('click', function () { $('qDlg').close(); });
-    $('qCourse').addEventListener('change', function () { draftClos = []; renderQClos(); fillTopicList(); });
+    $('qCourse').addEventListener('change', function () { draftClos = []; draftPlos = []; renderQClos(); renderQPlos(); fillTopicList(); });
     $('qAddPart').addEventListener('click', function () { draftParts.push({ text: '', marks: 1 }); renderQParts(); });
     $('qMarks').addEventListener('input', updQTotal);
     $('qAddClo').addEventListener('click', function () {
@@ -2066,6 +2335,10 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     });
     $('pMax').addEventListener('input', function (e) { p().maxMarksOverride = e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0); changed(); renderPaperLists(); });
     $('pCloTable').addEventListener('change', function (e) { p().appendCloTable = e.target.checked; changed(); });
+    $('pShowPlo').addEventListener('change', function (e) { p().showPlo = e.target.checked; changed(); renderPaperLists(); });
+    $('pDataLines').addEventListener('change', function (e) { p().dataLines = e.target.value; changed(); renderPaperLists(); });
+    $('pStemLines').addEventListener('change', function (e) { p().stemLines = e.target.value; changed(); renderPaperLists(); });
+    $('pTpl').addEventListener('click', function () { $('tplFile').value = ''; $('tplFile').click(); });
     $('pSearch').addEventListener('input', renderPaperLists);
     $('pDownload').addEventListener('click', downloadPaper);
     $('pClear').addEventListener('click', function () { if (confirm('Remove all questions from this paper? (They stay in the bank.)')) { p().questionIds = []; changed(); renderPaperLists(); } });
@@ -2133,6 +2406,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
 
   function start() {
+    loadTemplate().then(function () { if (current() === 'backup') renderTplState(); });
     document.body.classList.remove('booting');
     if (keyInfo) $('lockNow').classList.remove('hidden');
     bind(); setStatus(); render('bank'); armAutoLock();

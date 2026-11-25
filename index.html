@@ -113,9 +113,17 @@
         </div>
         <div class="field"><label for="pInstr">Note / Instructions (optional)</label><textarea id="pInstr" rows="2" maxlength="3000"></textarea></div>
         <label class="check"><input id="pCloTable" type="checkbox"> Add a CLO-wise marks table at the end of the paper</label>
+        <label class="check"><input id="pShowPlo" type="checkbox" checked> Show PLOs next to CLOs in question headings (right-aligned)</label>
+        <div class="row2">
+          <div class="field"><label for="pDataLines">Shared data tables (e.g. financial statements)</label>
+            <select id="pDataLines"><option value="none">No lines</option><option value="lines">With table lines</option></select></div>
+          <div class="field"><label for="pStemLines">Tables inside questions</label>
+            <select id="pStemLines"><option value="lines">With table lines</option><option value="none">No lines</option></select></div>
+        </div>
         <div class="ai-actions">
           <button id="pDownload" class="btn primary">Download paper (.docx)</button>
           <button id="uploadPaper" class="btn">⬆ Upload an existing paper</button>
+          <button id="pTpl" class="btn ghost">🎨 Change paper template</button>
           <button id="pClear" class="btn ghost">Clear questions</button>
         </div>
         <p id="pSummary" class="summary"></p>
@@ -208,6 +216,17 @@
           <select id="autoLock"><option value="0">never</option><option value="10">10 min</option><option value="30">30 min</option><option value="60">60 min</option></select>
           <span class="small muted">of inactivity</span></div>
         <hr>
+        <h2>Paper template</h2>
+        <p id="tplState" class="small"></p>
+        <div class="ai-actions">
+          <button id="tplUpload" class="btn primary">⬆ Upload my template (Word file)</button>
+          <button id="tplDownload" class="btn">Download current template</button>
+          <button id="tplReset" class="btn ghost">Use the default DSU template</button>
+          <input id="tplFile" type="file" class="hidden">
+        </div>
+        <p class="small muted">Use any Word file with your letterhead: logo, header, footer, margins and fonts are kept. The app fills in the course details and questions.
+          Header lines such as the exam title, department and university are updated automatically from Paper Builder.</p>
+        <hr>
         <h2>Paper letterhead</h2>
         <div class="field"><label for="sUni">University</label><input id="sUni" maxlength="120"></div>
         <div class="row2">
@@ -232,8 +251,17 @@
     </div>
     <div class="field"><label>CLOs</label><div id="qClos" class="chips"></div>
       <div class="inline-add"><input id="qNewClo" maxlength="600" placeholder="Add a new CLO description to this course…"><button type="button" id="qAddClo" class="btn small">Add CLO</button></div></div>
+    <div class="field"><label>PLOs</label><div id="qPlos" class="chips"></div>
+      <div class="inline-add"><input id="qNewPlo" maxlength="600" placeholder="Add a PLO to this course (e.g. Critical thinking)…"><button type="button" id="qAddPlo" class="btn small">Add PLO</button></div></div>
     <div class="field"><label for="qStem">Statement / scenario / data (optional; lines with | become a table)</label>
-      <textarea id="qStem" rows="3" maxlength="20000"></textarea></div>
+      <textarea id="qStem" rows="3" maxlength="60000"></textarea>
+      <div class="field inline small-inline"><label for="qTableLines">Tables in this question</label>
+        <select id="qTableLines"><option value="">Same as paper setting</option><option value="lines">With lines</option><option value="none">No lines</option></select></div></div>
+    <details class="field data-box" id="qDataWrap"><summary>Shared data / case / exhibit tables (optional)</summary>
+      <p class="small muted">Data used by more than one question (e.g. financial statements). On a paper it is printed once, before the first question that uses it. Lines with | become a table.</p>
+      <textarea id="qData" rows="5" maxlength="150000"></textarea>
+      <div class="field inline"><label for="qDataLines">Table lines</label>
+        <select id="qDataLines"><option value="">Same as paper setting</option><option value="lines">With lines</option><option value="none">No lines</option></select></div></details>
     <div class="field"><label>Parts</label>
       <div class="parts-quick"><span class="small muted">Quick:</span>
         <button type="button" class="chip" data-np="0">No parts</button><button type="button" class="chip" data-np="1">(a)</button>
@@ -265,6 +293,8 @@
     </div>
     <div class="field"><label>Course Learning Outcomes</label><div id="cClos"></div>
       <button type="button" id="cAddClo" class="btn small">+ Add CLO</button></div>
+    <div class="field"><label>Programme Learning Outcomes (PLOs)</label><div id="cPlos"></div>
+      <button type="button" id="cAddPlo" class="btn small">+ Add PLO</button></div>
     <p id="cErr" class="err"></p>
     <div class="dlg-actions"><button type="button" id="cCancel" class="btn ghost">Cancel</button><button type="submit" class="btn primary">Save course</button></div>
   </form>
@@ -320,6 +350,8 @@
       <div class="field"><label for="psMarks">Marks when none given</label><input id="psMarks" type="number" min="0.5" step="0.5" value="1"></div>
       <div class="field"><label for="psType">Type</label><select id="psType"><option value="">—</option><option>Theory</option><option>Numerical</option></select></div>
     </div>
+    <div class="field"><label for="psShared">Tables / data printed before the questions (e.g. financial statements)</label>
+      <select id="psShared"><option value="auto">Attach to the questions that refer to it (recommended)</option><option value="first">Attach to the first question only</option><option value="all">Attach to every question</option><option value="none">Don’t keep it</option></select></div>
     <textarea id="psText" rows="10" maxlength="300000" placeholder="Q1. Availability &amp; Anchoring (4 marks) CLO 1, CLO 2&#10;(a) Define availability heuristic. (1 mark)&#10;(b) …"></textarea>
     <div class="ai-actions"><button type="button" id="psRead" class="btn primary">Read questions</button><span id="psMsg" class="small"></span></div>
     <div id="psResults" class="qlist"></div>

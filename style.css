@@ -220,3 +220,17 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .connect ol { padding-left: 18px; }
 .ai-working { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.data-box { border: 1px dashed #cfccc5; border-radius: 8px; padding: 6px 10px; }
+.data-box summary { cursor: pointer; font-weight: 600; font-size: 12.5px; }
+.badge.plo { background: #e8f3ee; color: #1f6b45; }
+.badge.data { background: #eef0fb; color: #3b3f9c; }
+.qdata { margin: 6px 0; }
+.qdata summary { cursor: pointer; font-size: 12.5px; color: #3b3f9c; font-weight: 600; }
+.pv-data { margin-bottom: 12px; font-family: "Times New Roman", Georgia, serif; }
+.plo-row { display: grid; grid-template-columns: 90px 1fr 30px; gap: 8px; margin-bottom: 8px; align-items: start; }
+
+.pv-table.nolines, .pv-table.nolines th, .pv-table.nolines td { border: 0; }
+.pv-table.nolines th { background: none; border-bottom: 0; }
+.small-inline { margin-top: 6px; margin-bottom: 0; }
+.small-inline select, .data-box .field.inline select { width: auto; }
