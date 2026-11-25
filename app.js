@@ -398,7 +398,14 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   // ---------- Paper body as a simple document model ----------
   // blocks: {k:'p', a:'both|left|center|right', keep, runs:[{t,b,i,u,s,f}]}  |  {k:'h', l:[runs], r:[runs]}  |  {k:'t', rows:[[text]], lines}
   // The same model is shown in the editable paper and written to Word, so edits survive the download.
-  function P(text, o) { o = o || {}; return { k: 'p', a: o.a || 'both', keep: !!o.keep, runs: text ? [{ t: text, b: !!o.b }] : [] }; }
+  // "(a) …", "a) …", "(ii) …", "1. …", "2) …" -> the marker is printed bold
+  var RE_MARK = /^(\s*(?:\(\s*(?:[a-z]|[ivx]{1,5}|\d{1,2})\s*\)|(?:[a-z]|[ivx]{1,5}|\d{1,2})[.)]))(\s+)([\s\S]*)$/i;
+  function markedRuns(text, b) {
+    var m = RE_MARK.exec(text);
+    if (!m || b) return [{ t: text, b: !!b }];
+    return [{ t: m[1] + m[2], b: true }, { t: m[3], b: false }];
+  }
+  function P(text, o) { o = o || {}; return { k: 'p', a: o.a || 'both', keep: !!o.keep, runs: text ? (o.plain ? [{ t: text, b: !!o.b }] : markedRuns(text, o.b)) : [] }; }
   // One segment per question: [shared data printed before it] + heading + statement + parts.
   function buildSegments(qs, opts) {
     var flat = buildBody(qs, opts), segs = [], starts = flat.starts;
@@ -1814,8 +1821,14 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   function baseBody(m) { return flatten(baseSegs(m)); }
   function flatten(segs) { var out = []; segs.forEach(function (s) { s.blocks.forEach(function (b) { out.push(b); }); }); return out; }
   // signature of a question's own content, ignoring its number (so reordering keeps edits)
+  // based on the question's text only (not its formatting), so layout updates never throw away edits
   function segSig(seg) {
-    return hashStr(JSON.stringify(seg.blocks).replace(/"t":"Q\d+\. /g, '"t":"Q#. ').replace(/Use the following information for Questions? [\d, and]+:/g, 'Use the following information:'));
+    var txt = seg.blocks.map(function (b) {
+      if (b.k === 't') return 'T:' + JSON.stringify(b.rows);
+      var rs = b.k === 'h' ? (b.l || []).concat([{ t: ' | ' }], b.r || []) : (b.runs || []);
+      return rs.map(function (r) { return r.t; }).join('');
+    }).join('\n');
+    return hashStr(txt.replace(/^Q\d+\. /gm, 'Q#. ').replace(/Use the following information for Questions? [\d, and]+:/g, 'Use the following information:'));
   }
   // paper = each question's edited version if that question did not change, otherwise its fresh version
   function assemble(m) {
