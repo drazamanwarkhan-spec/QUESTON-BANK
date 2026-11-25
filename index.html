@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Security: only this site's own files may run; the only outside connection allowed is Google's Gemini API. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src https://generativelanguage.googleapis.com; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>Question Bank &amp; Paper Generator</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="style.css">
+<script defer src="app.js"></script>
+</head>
+<body class="booting">
+
+<!-- Lock screen (shown when a password is set) -->
+<section id="lock" class="lock hidden" aria-labelledby="lockTitle">
+  <div class="lock-card">
+    <img src="logo.png" alt="" class="lock-logo">
+    <h1 id="lockTitle">Question bank is locked</h1>
+    <p class="muted">Enter the password set on this PC.</p>
+    <input id="lockPw" type="password" autocomplete="current-password" placeholder="Password">
+    <button id="lockBtn" class="btn primary wide">Unlock</button>
+    <p id="lockErr" class="err"></p>
+    <button id="lockForgot" class="link small">Forgot password? Erase data on this PC…</button>
+  </div>
+</section>
+
+<header class="topbar">
+  <div class="brand">
+    <img src="logo.png" alt="" class="logo">
+    <div>
+      <div class="brand-title">Question Bank</div>
+      <div class="brand-sub" id="brandSub">Paper generator</div>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="bank" role="tab">Question Bank</button>
+    <button class="tab" data-tab="ai" role="tab">AI Generate</button>
+    <button class="tab" data-tab="paper" role="tab">Paper Builder</button>
+    <button class="tab" data-tab="courses" role="tab">Courses &amp; CLOs</button>
+    <button class="tab" data-tab="backup" role="tab">Backup &amp; Security</button>
+  </nav>
+  <div class="top-actions">
+    <span id="saveStatus" class="save-status">Saved</span>
+    <button id="lockNow" class="btn ghost hidden" title="Lock now">Lock</button>
+    <button id="saveBtn" class="btn primary" title="Save to this PC (Ctrl+S)">Save</button>
+  </div>
+</header>
+
+<main>
+  <!-- QUESTION BANK -->
+  <section id="tab-bank" class="panel">
+    <div class="toolbar">
+      <select id="fCourse" aria-label="Course"></select>
+      <select id="fClo" aria-label="CLO"></select>
+      <select id="fType" aria-label="Type">
+        <option value="">All types</option><option>Theory</option><option>Numerical</option>
+      </select>
+      <select id="fDiff" aria-label="Difficulty">
+        <option value="">All levels</option><option>Easy</option><option>Medium</option><option>Hard</option>
+      </select>
+      <input id="fSearch" type="search" placeholder="Search questions…" aria-label="Search">
+      <span class="spacer"></span>
+      <button id="bankReport" class="btn">Download bank (.docx)</button>
+      <button id="addQ" class="btn primary">+ Add question</button>
+    </div>
+    <p id="bankCount" class="muted small"></p>
+    <div id="qList" class="qlist"></div>
+  </section>
+
+  <!-- AI GENERATE -->
+  <section id="tab-ai" class="panel hidden">
+    <div class="grid2">
+      <div class="card">
+        <h2>Generate questions with AI</h2>
+        <div class="field"><label for="aiCourse">Course</label><select id="aiCourse"></select></div>
+        <div class="field"><label>CLOs to assess</label><div id="aiClos" class="chips"></div></div>
+        <div class="row3">
+          <div class="field"><label for="aiType">Question type</label>
+            <select id="aiType"><option>Theory</option><option>Numerical</option><option>Mixed</option></select></div>
+          <div class="field"><label for="aiCount">How many</label><input id="aiCount" type="number" min="1" max="20" value="3"></div>
+          <div class="field"><label for="aiMarks">Marks each</label><input id="aiMarks" type="number" min="0.5" max="100" step="0.5" value="4"></div>
+        </div>
+        <div class="row3">
+          <div class="field"><label for="aiParts">Sub-parts</label><input id="aiParts" type="number" min="0" max="10" value="2"></div>
+          <div class="field"><label for="aiDiff">Difficulty</label>
+            <select id="aiDiff"><option value="">Mixed</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div>
+          <div class="field"><label for="aiBloom">Bloom level</label>
+            <select id="aiBloom"><option value="">Any</option><option>Remember</option><option>Understand</option><option>Apply</option><option>Analyze</option><option>Evaluate</option><option>Create</option></select></div>
+        </div>
+        <div class="field"><label for="aiTopic">Topic(s)</label><input id="aiTopic" type="text" maxlength="300" placeholder="e.g. NPV and IRR, capital budgeting"></div>
+        <div class="field"><label for="aiNotes">Extra instructions (optional)</label><input id="aiNotes" type="text" maxlength="500" placeholder="e.g. use Pakistani context and PKR figures"></div>
+        <div class="field"><label for="aiSource">Course material to base questions on (optional)</label>
+          <textarea id="aiSource" rows="4" maxlength="60000" placeholder="Paste lecture notes or a chapter summary…"></textarea></div>
+        <label class="check"><input id="aiAnswers" type="checkbox" checked> Also create an answer key (kept in the bank, never printed on the paper)</label>
+
+        <div class="ai-actions">
+          <button id="aiGemini" class="btn primary">Generate with Gemini</button>
+          <span class="muted small" id="aiKeyState"></span>
+        </div>
+        <details class="nokey">
+          <summary>No API key? Use Gemini or Copilot in your browser instead</summary>
+          <ol class="small">
+            <li>Click a button below. The prompt is copied and the AI site opens (it uses the Google / Microsoft account already signed in to this browser).</li>
+            <li>Paste the prompt there (Ctrl+V) and send it.</li>
+            <li>Copy the AI's whole reply, paste it in the box on the right, and click <b>Read reply</b>.</li>
+          </ol>
+          <div class="ai-actions">
+            <button id="aiOpenGemini" class="btn">Copy prompt &amp; open Gemini</button>
+            <button id="aiOpenCopilot" class="btn">Copy prompt &amp; open Copilot</button>
+            <button id="aiCopy" class="btn ghost">Copy prompt only</button>
+          </div>
+        </details>
+      </div>
+
+      <div class="card">
+        <h2>Results</h2>
+        <div class="field"><label for="aiPaste">AI reply (filled automatically with Gemini, or paste from Gemini / Copilot)</label>
+          <textarea id="aiPaste" rows="5" placeholder='{"questions":[ … ]}'></textarea></div>
+        <div class="ai-actions">
+          <button id="aiParse" class="btn">Read reply</button>
+          <span class="spacer"></span>
+          <label class="check small"><input id="aiToPaper" type="checkbox"> Also add to current paper</label>
+          <button id="aiAddSel" class="btn primary" disabled>Add selected to bank</button>
+        </div>
+        <p id="aiMsg" class="small"></p>
+        <div id="aiResults" class="qlist"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PAPER BUILDER -->
+  <section id="tab-paper" class="panel hidden">
+    <div class="grid2">
+      <div class="card">
+        <h2>Paper details</h2>
+        <div class="field"><label for="pCourse">Course</label><select id="pCourse"></select></div>
+        <div class="row2">
+          <div class="field"><label for="pCode">Course Code</label><input id="pCode" maxlength="40"></div>
+          <div class="field"><label for="pTitle">Course Title</label><input id="pTitle" maxlength="200"></div>
+        </div>
+        <div class="row3">
+          <div class="field"><label for="pExam">Examination</label><input id="pExam" list="examList" maxlength="120">
+            <datalist id="examList"><option value="Midterm Semester Examinations"><option value="Final Semester Examinations"><option value="Sessional Examination"><option value="Quiz"><option value="Assignment"></datalist></div>
+          <div class="field"><label for="pSeason">Semester</label>
+            <select id="pSeason"><option>Fall</option><option>Spring</option><option>Summer</option></select></div>
+          <div class="field"><label for="pYear">Year</label><select id="pYear"></select></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="pClass">Class / Section</label><input id="pClass" maxlength="120"></div>
+          <div class="field"><label for="pInstructor">Course Instructor</label><input id="pInstructor" maxlength="120"></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="pDate">Date of Exam</label><input id="pDate" type="date"></div>
+          <div class="field"><label for="pStart">Exam Time (optional)</label><input id="pStart" type="time"></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="pTime">Time Allowed</label>
+            <select id="pTime">
+              <option>30 Minutes</option><option>45 Minutes</option><option>1 Hour</option><option>1:15 Hours</option><option>1:30 Hours</option>
+              <option>2 Hours</option><option>2:30 Hours</option><option>3 Hours</option><option value="__custom">Other…</option>
+            </select>
+            <input id="pTimeCustom" class="hidden" maxlength="40" placeholder="e.g. 1:45 Hours"></div>
+          <div class="field"><label for="pMax">Max Marks</label><input id="pMax" type="number" min="0" step="0.5" placeholder="auto"></div>
+        </div>
+        <div class="field"><label for="pInstr">Note / Instructions (optional)</label><textarea id="pInstr" rows="2" maxlength="3000"></textarea></div>
+        <label class="check"><input id="pCloTable" type="checkbox"> Add a CLO-wise marks table at the end of the paper</label>
+        <div class="ai-actions">
+          <button id="pDownload" class="btn primary">Download paper (.docx)</button>
+          <button id="pClear" class="btn ghost">Clear questions</button>
+        </div>
+        <p id="pSummary" class="summary"></p>
+        <div id="pCloDist" class="clo-dist"></div>
+      </div>
+
+      <div class="card">
+        <h2>Questions on this paper</h2>
+        <div id="pSelected" class="qlist compact"></div>
+        <h3>Add from question bank</h3>
+        <input id="pSearch" type="search" placeholder="Search this course's questions…">
+        <div id="pAvailable" class="qlist compact"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Preview</h2>
+      <div id="preview" class="preview"></div>
+    </div>
+  </section>
+
+  <!-- COURSES -->
+  <section id="tab-courses" class="panel hidden">
+    <div class="toolbar"><span class="spacer"></span><button id="addCourse" class="btn primary">+ Add course</button></div>
+    <div id="courseList" class="course-list"></div>
+  </section>
+
+  <!-- BACKUP & SECURITY -->
+  <section id="tab-backup" class="panel hidden">
+    <div class="grid2">
+      <div class="card">
+        <h2>Save to this PC</h2>
+        <p class="small muted">Everything is stored only on this computer, in this browser. Nothing is uploaded to GitHub or anywhere else.
+          Pressing <b>Save</b> also writes a backup file to your PC.</p>
+        <div class="field"><label>When I press Save</label>
+          <label class="radio"><input type="radio" name="bmode" value="auto"> Overwrite my linked backup file (Chrome / Edge), or download a copy in other browsers</label>
+          <label class="radio"><input type="radio" name="bmode" value="download"> Always download a new backup copy</label>
+          <label class="radio"><input type="radio" name="bmode" value="browser"> Keep in this browser only</label>
+        </div>
+        <p id="linkState" class="small"></p>
+        <div class="ai-actions">
+          <button id="linkFile" class="btn">Choose backup file location…</button>
+          <button id="unlinkFile" class="btn ghost">Unlink</button>
+        </div>
+        <hr>
+        <h2>Import / Export (JSON)</h2>
+        <div class="ai-actions">
+          <button id="exportJson" class="btn">Export JSON</button>
+          <button id="importJson" class="btn">Import JSON…</button>
+          <input id="importFile" type="file" accept=".json,application/json" class="hidden">
+        </div>
+        <p class="small muted">Use export / import to move the bank to another PC or share it with a colleague. Exports never contain your password or AI key.</p>
+      </div>
+
+      <div class="card">
+        <h2>Password lock</h2>
+        <p id="pwState" class="small"></p>
+        <div class="row2">
+          <input id="pw1" type="password" autocomplete="new-password" placeholder="New password (min 8)">
+          <input id="pw2" type="password" autocomplete="new-password" placeholder="Repeat password">
+        </div>
+        <div class="ai-actions">
+          <button id="setPw" class="btn primary">Set / change password</button>
+          <button id="removePw" class="btn ghost">Remove password</button>
+        </div>
+        <div class="field inline"><label for="autoLock">Auto-lock after</label>
+          <select id="autoLock"><option value="0">never</option><option value="10">10 min</option><option value="30">30 min</option><option value="60">60 min</option></select>
+          <span class="small muted">of inactivity</span></div>
+        <hr>
+        <h2>AI (Gemini)</h2>
+        <p class="small muted">Sign in with your Google account at Google AI Studio, create a free API key and paste it here.
+          The key is stored only on this PC (encrypted when a password is set) and is sent only to Google.</p>
+        <div class="ai-actions"><button id="getKey" class="btn">Open Google AI Studio (get key)</button></div>
+        <div class="row2">
+          <input id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Paste Gemini API key">
+          <div class="ai-actions tight"><button id="saveKey" class="btn">Save key</button><button id="clearKey" class="btn ghost">Remove</button></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="aiModel">Model</label><input id="aiModel" list="modelList" maxlength="80"><datalist id="modelList"></datalist></div>
+          <div class="ai-actions tight bottom"><button id="testKey" class="btn">Test &amp; list models</button></div>
+        </div>
+        <p id="keyMsg" class="small"></p>
+        <hr>
+        <h2>Paper letterhead</h2>
+        <div class="field"><label for="sUni">University</label><input id="sUni" maxlength="120"></div>
+        <div class="row2">
+          <div class="field"><label for="sDeptPrefix">Prefix</label><input id="sDeptPrefix" maxlength="60"></div>
+          <div class="field"><label for="sDept">Department</label><input id="sDept" maxlength="120"></div>
+        </div>
+        <hr>
+        <h2 class="danger-h">Danger zone</h2>
+        <button id="wipe" class="btn danger">Erase all data from this browser</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Question editor -->
+<dialog id="qDlg" class="dlg">
+  <form method="dialog" id="qForm" class="dlg-body">
+    <h2 id="qDlgTitle">Question</h2>
+    <div class="row2">
+      <div class="field"><label for="qCourse">Course</label><select id="qCourse" required></select></div>
+      <div class="field"><label for="qTitle">Heading</label><input id="qTitle" maxlength="300" placeholder="e.g. Availability &amp; Anchoring"></div>
+    </div>
+    <div class="field"><label>CLOs</label><div id="qClos" class="chips"></div>
+      <div class="inline-add"><input id="qNewClo" maxlength="600" placeholder="Add a new CLO description to this course…"><button type="button" id="qAddClo" class="btn small">Add CLO</button></div></div>
+    <div class="field"><label for="qStem">Statement / scenario / data (optional; lines with | become a table)</label>
+      <textarea id="qStem" rows="3" maxlength="20000"></textarea></div>
+    <div class="field"><label>Parts</label><div id="qParts"></div>
+      <button type="button" id="qAddPart" class="btn small">+ Add part</button></div>
+    <div class="row3">
+      <div class="field" id="qMarksWrap"><label for="qMarks">Marks (no parts)</label><input id="qMarks" type="number" min="0" step="0.5"></div>
+      <div class="field"><label for="qType">Type</label><select id="qType"><option value="">—</option><option>Theory</option><option>Numerical</option></select></div>
+      <div class="field"><label for="qDiff">Difficulty</label><select id="qDiff"><option value="">—</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div>
+    </div>
+    <div class="field"><label for="qTopic">Topic</label><input id="qTopic" maxlength="200"></div>
+    <div class="field"><label for="qAnswer">Answer key (private, never printed on the paper)</label><textarea id="qAnswer" rows="2" maxlength="20000"></textarea></div>
+    <p id="qTotal" class="summary"></p>
+    <p id="qErr" class="err"></p>
+    <div class="dlg-actions"><button type="button" id="qCancel" class="btn ghost">Cancel</button><button type="submit" id="qSave" class="btn primary">Save question</button></div>
+  </form>
+</dialog>
+
+<!-- Course editor -->
+<dialog id="cDlg" class="dlg">
+  <form method="dialog" id="cForm" class="dlg-body">
+    <h2 id="cDlgTitle">Course</h2>
+    <div class="row2">
+      <div class="field"><label for="cCode">Course code</label><input id="cCode" maxlength="40" required placeholder="MS-4711"></div>
+      <div class="field"><label for="cTitle">Course title</label><input id="cTitle" maxlength="200" required placeholder="Foreign Language"></div>
+    </div>
+    <div class="field"><label>Course Learning Outcomes</label><div id="cClos"></div>
+      <button type="button" id="cAddClo" class="btn small">+ Add CLO</button></div>
+    <p id="cErr" class="err"></p>
+    <div class="dlg-actions"><button type="button" id="cCancel" class="btn ghost">Cancel</button><button type="submit" class="btn primary">Save course</button></div>
+  </form>
+</dialog>
+
+<!-- Import choice -->
+<dialog id="iDlg" class="dlg small-dlg">
+  <form method="dialog" class="dlg-body">
+    <h2>Import question bank</h2>
+    <p id="iInfo"></p>
+    <label class="radio"><input type="radio" name="imode" value="merge" checked> Merge with my current bank (recommended)</label>
+    <label class="radio"><input type="radio" name="imode" value="replace"> Replace my current bank</label>
+    <div class="dlg-actions"><button value="cancel" class="btn ghost">Cancel</button><button value="ok" class="btn primary">Import</button></div>
+  </form>
+</dialog>
+
+<!-- Password prompt -->
+<dialog id="pwDlg" class="dlg small-dlg">
+  <form method="dialog" class="dlg-body">
+    <h2 id="pwDlgTitle">Password</h2>
+    <p id="pwDlgText" class="small"></p>
+    <input id="pwDlgInput" type="password" autocomplete="off">
+    <div class="dlg-actions"><button value="cancel" class="btn ghost">Cancel</button><button value="ok" class="btn primary">OK</button></div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<noscript><p class="noscript">This app needs JavaScript enabled.</p></noscript>
+</body>
+</html>
