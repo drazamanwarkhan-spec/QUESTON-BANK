@@ -270,3 +270,9 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .ib-sum { background: #f9f8f5; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; color: var(--ink); }
 .ib-sum .chips { margin-top: 6px; }
 .badge.dup { background: #fff1d6; color: var(--warn); }
+
+.course-note { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; background: #e6f4ec; border: 1px solid #b9dfc8; border-radius: 8px; padding: 7px 10px; margin: -4px 0 12px; font-size: 13px; }
+
+.date-mode { margin-bottom: 6px; }
+.dd00 { align-self: center; font-weight: 600; color: var(--muted); }
+#pDateMonthWrap select { width: auto; flex: 1; }

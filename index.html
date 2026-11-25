@@ -135,13 +135,10 @@
           <div class="field"><label for="pCode">Course Code</label><input id="pCode" maxlength="40"></div>
           <div class="field"><label for="pTitle">Course Name</label><input id="pTitle" maxlength="200"></div>
         </div>
-        <div id="pCourseAsk" class="back-banner hidden">
-          <div id="pCourseAskText"></div>
-          <div class="ai-actions tight">
-            <button type="button" id="pcRename" class="btn small primary"></button>
-            <button type="button" id="pcAdd" class="btn small">Add as a new course</button>
-            <button type="button" id="pcOnly" class="btn small ghost">Only on this paper</button>
-          </div>
+        <div id="pCourseAsk" class="course-note hidden">
+          <span id="pCourseAskText"></span>
+          <button type="button" id="pcUndo" class="link small">Undo</button>
+          <button type="button" id="pcSeparate" class="link small">Keep the old course and add this as a new one</button>
         </div>
         <div class="row2">
           <div class="field"><label for="pDept">Department</label><input id="pDept" maxlength="150" placeholder="Department of Management Sciences"></div>
@@ -159,7 +156,18 @@
           <div class="field"><label for="pInstructor">Course Instructor</label><input id="pInstructor" maxlength="120"></div>
         </div>
         <div class="row2">
-          <div class="field"><label for="pDate">Date of Exam</label><div class="date-wrap"><input id="pDate" type="date"><button type="button" id="pDateBtn" class="btn cal" title="Open calendar" aria-label="Open calendar">📅</button></div></div>
+          <div class="field"><label for="pDateMode">Date of Exam</label>
+            <select id="pDateMode" class="date-mode">
+              <option value="exact">Exact date (calendar)</option>
+              <option value="month">Day not known yet (00)</option>
+              <option value="none">No date yet (leave blank)</option>
+            </select>
+            <div id="pDateExact" class="date-wrap"><input id="pDate" type="date" aria-label="Date of exam"><button type="button" id="pDateBtn" class="btn cal" title="Open calendar" aria-label="Open calendar">📅</button></div>
+            <div id="pDateMonthWrap" class="date-wrap hidden">
+              <select id="pDateMonth" aria-label="Month"><option value="1">January</option><option value="2">February</option><option value="3">March</option><option value="4">April</option><option value="5">May</option><option value="6">June</option><option value="7">July</option><option value="8">August</option><option value="9">September</option><option value="10">October</option><option value="11">November</option><option value="12">December</option></select>
+              <span class="dd00">00,</span>
+              <select id="pDateYear" aria-label="Year"></select>
+            </div></div>
           <div class="field"><label for="pStart">Exam Time (optional)</label><input id="pStart" type="time"></div>
         </div>
         <div class="row2">

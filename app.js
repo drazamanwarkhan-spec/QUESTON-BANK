@@ -149,7 +149,9 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         examTime: /^\d{2}:\d{2}$/.test(p.examTime) ? p.examTime : '',
         classSection: str(p.classSection, 120),
         instructor: str(p.instructor, 120), timeAllowed: typeof p.timeAllowed === 'string' ? p.timeAllowed.slice(0, 40) : dp.timeAllowed,
-        date: /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : '', maxMarksOverride: p.maxMarksOverride === '' || p.maxMarksOverride == null ? '' : num(p.maxMarksOverride),
+        date: /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : '', dateMode: ['exact', 'month', 'none'].indexOf(p.dateMode) >= 0 ? p.dateMode : 'exact',
+        dateMonth: Math.min(12, Math.max(1, Math.round(Number(p.dateMonth)) || (new Date().getMonth() + 1))),
+        dateYear: (function (y) { y = Math.round(Number(y)); return y >= 2000 && y <= 2100 ? y : new Date().getFullYear(); })(p.dateYear), maxMarksOverride: p.maxMarksOverride === '' || p.maxMarksOverride == null ? '' : num(p.maxMarksOverride),
         instructions: str(p.instructions, 3000), department: str(p.department, 150), university: str(p.university, 120), questionIds: arr(p.questionIds, 200).filter(function (x) { return typeof x === 'string'; }),
         appendCloTable: !!p.appendCloTable, showPlo: p.showPlo !== false,
         stemLines: p.stemLines === 'none' ? 'none' : 'lines', dataLines: p.dataLines === 'lines' ? 'lines' : 'none',
@@ -367,7 +369,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var p2 = para('<w:tabs><w:tab w:val="left" w:pos="6710"/></w:tabs><w:rPr>' + CAL + '</w:rPr>',
       run('Course Instructor', CB) + run(': ' + (h.instructor || ''), C) + tab(C) + run('Max Marks:', CB) + run(' ' + (h.maxMarks == null ? '' : h.maxMarks), C));
     var S = { font: 'cal', sz: 22 }, SB = { font: 'cal', b: true, sz: 22 };
-    var dateTxt = (fmtDate(h.date) || 'December,  , ' + new Date().getFullYear()) + (h.examTime ? '  (' + h.examTime + ')' : '');
+    var dateTxt = (h.dateText != null ? h.dateText : (fmtDate(h.date) || 'December,  , ' + new Date().getFullYear())) + (h.examTime ? '  (' + h.examTime + ')' : '');
     var p3 = para('<w:tabs><w:tab w:val="left" w:pos="7200"/><w:tab w:val="left" w:pos="7445"/></w:tabs><w:rPr>' + CAL + '<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>',
       run('Date of Exam', CB) + run(' :  ' + dateTxt, C) + tab(C) + tab(C) + run('Reg. No', CB) + run(': ___________________', C) + br(C) +
       run('Student’s Name:', CB) + run(' _____________________', C) + br(S) + tab(S) + run('Moderated by:', SB) + run(' ________________', S));
@@ -1643,7 +1645,6 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     if (!course(p.courseId) && data.courses.length) p.courseId = data.courses[0].id;
     fillCourseSelect($('pCourse'), p.courseId);
     var c = course(p.courseId) || { code: '', title: '' };
-    $('pCourseAsk').classList.add('hidden');
     $('pDept').value = p.department || (data.settings.deptPrefix + data.settings.department); $('pUni').value = p.university || data.settings.university;
     $('pCode').value = p.courseCode || c.code; $('pTitle').value = p.courseTitle || c.title;
     $('pExam').value = p.exam; $('pSeason').value = p.season; $('pClass').value = p.classSection; $('pInstructor').value = p.instructor;
@@ -1652,7 +1653,11 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var known = Array.from($('pTime').options).some(function (o) { return o.value === p.timeAllowed; });
     $('pTime').value = known ? p.timeAllowed : '__custom';
     $('pTimeCustom').classList.toggle('hidden', known); $('pTimeCustom').value = known ? '' : p.timeAllowed;
-    $('pStart').value = p.examTime; $('pDate').value = p.date; $('pMax').value = p.maxMarksOverride; $('pInstr').value = p.instructions;
+    $('pStart').value = p.examTime; $('pDate').value = p.date;
+    $('pDateMode').value = p.dateMode || 'exact'; $('pDateMonth').value = String(p.dateMonth || 1);
+    var dy = clear($('pDateYear')), ny = new Date().getFullYear();
+    for (var yy = ny - 2; yy <= ny + 5; yy++) dy.append(opt(String(yy), String(yy), yy === (p.dateYear || ny)));
+    showDateMode(); $('pMax').value = p.maxMarksOverride; $('pInstr').value = p.instructions;
     $('paperName').textContent = paperName(p) + '  \u00b7  ' + paperStats(p);
     $('pCloTable').checked = p.appendCloTable; $('pShowPlo').checked = p.showPlo !== false; $('pDataLines').value = p.dataLines || 'none'; $('pStemLines').value = p.stemLines || 'lines';
     renderPaperLists(); renderRG();
@@ -1711,7 +1716,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       university: p.university || data.settings.university, deptPrefix: p.department ? '' : data.settings.deptPrefix, department: p.department || data.settings.department,
       examTitle: [p.exam, p.season + ' ' + p.year].filter(function (x) { return x && x.trim(); }).join(' \u2013 ') + (setLabel ? ' (' + setLabel + ')' : ''),
       courseTitle: p.courseTitle || c.title, courseCode: p.courseCode || c.code, examTime: fmtTime(p.examTime), classSection: p.classSection, instructor: p.instructor, timeAllowed: p.timeAllowed,
-      date: p.date, maxMarks: p.maxMarksOverride === '' || qsOverride ? sum : p.maxMarksOverride, instructions: p.instructions,
+      date: p.date, dateText: dateText(p), maxMarks: p.maxMarksOverride === '' || qsOverride ? sum : p.maxMarksOverride, instructions: p.instructions,
       appendCloTable: p.appendCloTable, cloInfo: c.clos.map(function (x) { return { label: x.label, desc: x.desc }; }),
       showPlo: p.showPlo !== false, body: null,
       questions: qs.map(function (q) { return { id: q.id, title: q.title, stem: q.stem, data: q.data || '', parts: q.parts, marks: q.marks, cloLabels: cloLabels(q), ploLabels: ploLabels(q),
@@ -1733,6 +1738,18 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     }
     flush(); return wrap;
   }
+  // "December 3, 2026" | "December 00, 2026" (day not known) | "____________" (no date yet)
+  function dateText(p) {
+    var M = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    if (p.dateMode === 'month') return M[(p.dateMonth || 1) - 1] + ' 00, ' + (p.dateYear || p.year);
+    if (p.dateMode === 'none') return '________________';
+    return D.fmtDate(p.date) || '________________';
+  }
+  function showDateMode() {
+    var md = $('pDateMode').value;
+    $('pDateExact').classList.toggle('hidden', md !== 'exact');
+    $('pDateMonthWrap').classList.toggle('hidden', md !== 'month');
+  }
   function finishModel(m) { if (data.paper.edit) m.body = flatten(assemble(m)); return m; }
   function renderPreview(qs, max) {
     var m = paperModel(), box = clear($('preview'));
@@ -1743,7 +1760,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       h('div', { class: 'pv-grid' },
         h('span', null, h('b', { text: 'Class/ Section' }), ' : ' + m.classSection), h('span', null, h('b', { text: 'Time Allowed:' }), ' ' + m.timeAllowed),
         h('span', null, h('b', { text: 'Course Instructor' }), ': ' + m.instructor), h('span', null, h('b', { text: 'Max Marks:' }), ' ' + max),
-        h('span', null, h('b', { text: 'Date of Exam' }), ' : ' + (D.fmtDate(m.date) || '') + (m.examTime ? '  (' + m.examTime + ')' : '')), h('span', null, h('b', { text: 'Reg. No' }), ': ___________________'),
+        h('span', null, h('b', { text: 'Date of Exam' }), ' : ' + m.dateText + (m.examTime ? '  (' + m.examTime + ')' : '')), h('span', null, h('b', { text: 'Reg. No' }), ': ___________________'),
         h('span', null, h('b', { text: 'Student’s Name:' }), ' _____________________'), h('span', null, h('b', { text: 'Moderated by:' }), ' ________________')),
       h('p', null, h('b', null, h('u', { text: 'Note/ Instructions:' }), ' '), m.instructions ? m.instructions : h('b', { text: '(if Any)' })),
       h('hr', { class: 'pv-dots' }));
@@ -2059,40 +2076,53 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
 
   // ---------- course code / name typed in Paper Builder ----------
+  // The Course dropdown follows the Course Code / Course Name typed in Paper Builder:
+  //  - a code that exists  -> switch to that course
+  //  - a new code or name  -> the selected course is renamed (Undo, or keep it and add a new course instead)
+  var courseUndo = null, courseTimer = null;
   function courseTyped() {
-    var p = data.paper, code = $('pCode').value.trim(), title = $('pTitle').value.trim(), cur = course(p.courseId), box = $('pCourseAsk');
-    if (!code) { box.classList.add('hidden'); return; }
-    var match = data.courses.find(function (c) { return c.code.toLowerCase() === code.toLowerCase(); });
-    if (match && match !== cur) {                       // an existing course: just switch to it
-      if (p.questionIds.length && !confirm('Switch this paper to ' + match.code + ' \u2014 ' + match.title + '? The questions now on the paper will be removed from it (they stay in the bank).')) return;
-      p.courseId = match.id; p.questionIds = []; p.courseCode = ''; p.courseTitle = title && title !== match.title ? title : '';
-      box.classList.add('hidden'); changed(); renderPaper(); toast('Course changed to ' + match.code + '.'); return;
+    clearTimeout(courseTimer); courseTimer = null;
+    var p = data.paper, code = $('pCode').value.trim(), title = $('pTitle').value.trim(), cur = course(p.courseId);
+    if (!code && !title) return;
+    var match = code && data.courses.find(function (c) { return c.code.toLowerCase() === code.toLowerCase(); });
+    if (match && match !== cur) {
+      if (p.questionIds.length && !confirm('Switch this paper to ' + match.code + ' — ' + match.title + '? The questions now on the paper will be taken off it (they stay in the bank).')) return;
+      p.courseId = match.id; p.questionIds = []; p.edit = null; edKey = '';
+      p.courseCode = ''; p.courseTitle = '';   // switching never renames: the fields now show that course's own name courseUndo = null; $('pCourseAsk').classList.add('hidden');
+      changed(); renderPaper(); toast('Course changed to ' + match.code + ' — ' + match.title + '.'); return;
     }
-    if (match === cur && cur && (!title || title === cur.title)) { p.courseCode = ''; p.courseTitle = ''; box.classList.add('hidden'); changed(); return; }
-    if (match === cur && cur) {                         // same code, new name
-      $('pCourseAskText').textContent = 'Change the name of ' + cur.code + ' from \u201c' + cur.title + '\u201d to \u201c' + title + '\u201d everywhere?';
-      $('pcRename').textContent = 'Yes, rename the course'; $('pcAdd').classList.add('hidden');
-    } else {
-      $('pCourseAskText').textContent = '\u201c' + code + (title ? ' \u2014 ' + title : '') + '\u201d is not in your course list.' + (cur ? ' The selected course is ' + cur.code + ' \u2014 ' + cur.title + '.' : '');
-      $('pcRename').textContent = cur ? 'Rename ' + cur.code + ' to this' : 'Add as a new course';
-      $('pcAdd').classList.toggle('hidden', !cur);
-    }
-    box.classList.remove('hidden');
+    if (!cur) { courseAddNew(); return; }
+    var newCode = code || cur.code, newTitle = title || cur.title;
+    if (newCode === cur.code && newTitle === cur.title) return;
+    if (!courseUndo || courseUndo.id !== cur.id) courseUndo = { id: cur.id, code: cur.code, title: cur.title };
+    cur.code = newCode.slice(0, 40); cur.title = newTitle.slice(0, 200); p.courseCode = ''; p.courseTitle = '';
+    $('pCourseAskText').textContent = '✓ Course updated: ' + courseUndo.code + ' — ' + courseUndo.title + '  →  ' + cur.code + ' — ' + cur.title;
+    $('pcSeparate').classList.toggle('hidden', courseUndo.code.toLowerCase() === cur.code.toLowerCase());
+    $('pCourseAsk').classList.remove('hidden');
+    var keepFocus = document.activeElement && document.activeElement.id;
+    changed(); fillCourseSelect($('pCourse'), p.courseId); renderPaperLists();
+    if (keepFocus === 'pCode' || keepFocus === 'pTitle') $(keepFocus).focus();
   }
-  function courseRename() {
-    var p = data.paper, cur = course(p.courseId), code = $('pCode').value.trim(), title = $('pTitle').value.trim();
-    if (!cur) return courseAddNew();
-    if (data.courses.some(function (c) { return c !== cur && c.code.toLowerCase() === code.toLowerCase(); })) return toast('Another course already uses this code.', 'err');
-    cur.code = code.slice(0, 40); if (title) cur.title = title.slice(0, 200);
-    p.courseCode = ''; p.courseTitle = ''; $('pCourseAsk').classList.add('hidden');
-    changed(); renderPaper(); toast('Course renamed to ' + cur.code + ' \u2014 ' + cur.title + '.');
+  function courseUndoRename() {
+    if (!courseUndo) return;
+    var c = course(courseUndo.id); if (c) { c.code = courseUndo.code; c.title = courseUndo.title; }
+    courseUndo = null; $('pCourseAsk').classList.add('hidden'); changed(); renderPaper(); toast('Course name restored.');
+  }
+  function courseSeparate() {
+    if (!courseUndo) return;
+    var c = course(courseUndo.id), code = c.code, title = c.title;
+    c.code = courseUndo.code; c.title = courseUndo.title; courseUndo = null;
+    var nc = S.cleanCourse({ code: code, title: title, clos: [] });
+    data.courses.push(nc); data.paper.courseId = nc.id; data.paper.courseCode = ''; data.paper.courseTitle = '';
+    $('pCourseAsk').classList.add('hidden'); changed(); renderPaper();
+    toast('New course ' + nc.code + ' added and selected. The paper keeps its questions. Add its CLOs (or upload its outline) in Courses & CLOs.');
   }
   function courseAddNew() {
     var p = data.paper, code = $('pCode').value.trim(), title = $('pTitle').value.trim() || code;
+    if (!code) return;
     var c = S.cleanCourse({ code: code, title: title, clos: [] });
     data.courses.push(c); p.courseId = c.id; p.courseCode = ''; p.courseTitle = '';
-    $('pCourseAsk').classList.add('hidden'); changed(); renderPaper();
-    toast('New course ' + c.code + ' added. Add its CLOs (or upload its outline) in Courses & CLOs.');
+    changed(); renderPaper(); toast('New course ' + c.code + ' added.');
   }
 
   // ---------- several papers ----------
@@ -2158,7 +2188,8 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   }
   function paperFileName(code, title, setLabel) {
     var p = data.paper;
-    var n = [code, title].filter(Boolean).join(' ') + ' - ' + p.season + ' ' + p.year + ' ' + examLabel(p.exam) + (setLabel ? ' (' + setLabel + ')' : '');
+    var n = [code, title].filter(Boolean).join(' ') + (p.classSection && p.classSection.trim() ? ' (' + p.classSection.trim() + ')' : '') +
+      ' - ' + p.season + ' ' + p.year + ' ' + examLabel(p.exam) + (setLabel ? ' (' + setLabel + ')' : '');
     return n.replace(/[<>:"\/\\|?*\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150) || 'Paper';
   }
   async function downloadPaper() {
@@ -2831,6 +2862,13 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         renderQParts();
       });
     });
+    $('pDateMode').addEventListener('change', function (e) {
+      data.paper.dateMode = e.target.value;
+      if (e.target.value === 'month' && data.paper.date) { data.paper.dateMonth = Number(data.paper.date.slice(5, 7)); data.paper.dateYear = Number(data.paper.date.slice(0, 4)); $('pDateMonth').value = String(data.paper.dateMonth); $('pDateYear').value = String(data.paper.dateYear); }
+      showDateMode(); changed(); renderPaperLists();
+    });
+    $('pDateMonth').addEventListener('change', function (e) { data.paper.dateMonth = Number(e.target.value); changed(); renderPaperLists(); });
+    $('pDateYear').addEventListener('change', function (e) { data.paper.dateYear = Number(e.target.value); changed(); renderPaperLists(); });
     function openCal() { try { $('pDate').showPicker(); } catch (e) { $('pDate').focus(); } }
     $('pDateBtn').addEventListener('click', openCal);
     $('pDate').addEventListener('click', openCal);
@@ -2862,9 +2900,9 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var p = function () { return data.paper; };
     $('pCourse').addEventListener('change', function (e) {
       if (p().questionIds.length && !confirm('Changing the course clears the questions on this paper. Continue?')) { e.target.value = p().courseId; return; }
-      p().courseId = e.target.value; p().questionIds = []; p().courseCode = ''; p().courseTitle = ''; changed(); renderPaper();
+      p().courseId = e.target.value; p().questionIds = []; p().courseCode = ''; p().courseTitle = ''; p().edit = null; edKey = ''; courseUndo = null; $('pCourseAsk').classList.add('hidden'); changed(); renderPaper();
     });
-    [['pExam', 'exam'], ['pSeason', 'season'], ['pClass', 'classSection'], ['pInstructor', 'instructor'], ['pTimeCustom', 'timeAllowed'], ['pStart', 'examTime'], ['pDate', 'date'], ['pInstr', 'instructions'], ['pCode', 'courseCode'], ['pTitle', 'courseTitle'], ['pDept', 'department'], ['pUni', 'university']].forEach(function (m) {
+    [['pExam', 'exam'], ['pSeason', 'season'], ['pClass', 'classSection'], ['pInstructor', 'instructor'], ['pTimeCustom', 'timeAllowed'], ['pStart', 'examTime'], ['pDate', 'date'], ['pInstr', 'instructions'], ['pDept', 'department'], ['pUni', 'university']].forEach(function (m) {
       $(m[0]).addEventListener('input', function (e) { p()[m[1]] = e.target.value; changed(); renderPaperLists(); });
     });
     $('pYear').addEventListener('change', function (e) { p().year = Number(e.target.value); changed(); renderPaperLists(); });
@@ -2914,10 +2952,12 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     ['topPapers', 'myPapers'].forEach(function (id) { $(id).addEventListener('click', showMyPapers); });
     $('mpClose').addEventListener('click', function () { $('mpDlg').close(); });
     $('dlStay').addEventListener('click', function () { $('afterDl').classList.add('hidden'); });
-    ['pCode', 'pTitle'].forEach(function (id) { $(id).addEventListener('change', courseTyped); });
-    $('pcRename').addEventListener('click', courseRename);
-    $('pcAdd').addEventListener('click', courseAddNew);
-    $('pcOnly').addEventListener('click', function () { $('pCourseAsk').classList.add('hidden'); });
+    ['pCode', 'pTitle'].forEach(function (id) {
+      $(id).addEventListener('change', courseTyped);
+      $(id).addEventListener('input', function () { clearTimeout(courseTimer); courseTimer = setTimeout(courseTyped, 900); });
+    });
+    $('pcUndo').addEventListener('click', courseUndoRename);
+    $('pcSeparate').addEventListener('click', courseSeparate);
     $('pTpl').addEventListener('click', function () { $('tplFile').value = ''; $('tplFile').click(); });
     $('pSearch').addEventListener('input', renderPaperLists);
     $('pDownload').addEventListener('click', downloadPaper);
