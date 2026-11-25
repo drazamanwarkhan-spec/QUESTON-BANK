@@ -134,7 +134,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
         classSection: str(p.classSection, 120),
         instructor: str(p.instructor, 120), timeAllowed: typeof p.timeAllowed === 'string' ? p.timeAllowed.slice(0, 40) : dp.timeAllowed,
         date: /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : '', maxMarksOverride: p.maxMarksOverride === '' || p.maxMarksOverride == null ? '' : num(p.maxMarksOverride),
-        instructions: str(p.instructions, 3000), questionIds: arr(p.questionIds, 200).filter(function (x) { return typeof x === 'string'; }),
+        instructions: str(p.instructions, 3000), department: str(p.department, 150), university: str(p.university, 120), questionIds: arr(p.questionIds, 200).filter(function (x) { return typeof x === 'string'; }),
         appendCloTable: !!p.appendCloTable
       }
     };
@@ -488,163 +488,6 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
 })();
 
 ;
-/* AI question generation.
- *  - Direct: Google Gemini API, called from this browser with the faculty member's own API key
- *    (created with their Google account at https://aistudio.google.com/apikey). The key is kept
- *    only on this PC and is sent only to generativelanguage.googleapis.com (enforced by the CSP).
- *  - No key: copy the prompt, open Gemini or Copilot (already signed in in the browser), paste the reply back.
- * AI output is treated as untrusted text: parsed as JSON, sanitised, and shown with textContent only. */
-(function () {
-  'use strict';
-
-  var API = 'https://generativelanguage.googleapis.com/v1beta/';
-
-  function buildPrompt(o) {
-    // o: {course, cloLabels, count, marks, parts, difficulty, bloom, qtype, topic, notes, source, withAnswers, mine, mode, web}
-    var c = o.course, keep = o.mine && (o.mode === 'format' || o.mode === 'improve');
-    var cloLines = (c.clos || []).filter(function (x) { return !o.cloLabels.length || o.cloLabels.indexOf(x.label) >= 0; })
-      .map(function (x) { return '- ' + x.label + ': ' + (x.desc || '(no description)'); }).join('\n');
-    var L = [];
-    L.push('You are an experienced university examiner.');
-    L.push('Course: ' + (c.title || '') + ' (' + (c.code || '') + ')');
-    L.push('Course Learning Outcomes (CLOs):\n' + (cloLines || '- (no CLOs defined)'));
-    if (o.mine) {
-      if (o.mode === 'format') L.push('TASK: Below are the teacher\'s own questions. Keep their wording EXACTLY as written. Only number them, keep or create sub-parts (a), (b)... where the teacher has them, assign sensible marks, and map each question to the most suitable CLO(s) from the list.');
-      else if (o.mode === 'improve') L.push('TASK: Improve and rewrite the teacher\'s questions below: clearer wording, correct academic level, well-structured parts. Keep the same number of questions and the same topics. Map each to the most suitable CLO(s).');
-      else if (o.mode === 'similar') L.push('TASK: Write NEW, original questions in the same style, level and topic area as the teacher\'s sample questions below. Do not copy them.');
-      else L.push('TASK: Write new exam questions. Follow the teacher\'s instructions / notes below.');
-      L.push('Teacher\'s questions / instructions (between <<< and >>>):\n<<<\n' + o.mine + '\n>>>');
-    } else L.push('TASK: Write original exam questions.');
-    L.push('Requirements:');
-    if (!keep) {
-      L.push('- Number of questions: ' + o.count);
-      L.push('- Marks per question: ' + o.marks);
-      L.push('- Sub-parts per question: ' + (o.parts > 0 ? o.parts + ' (labelled (a), (b), ...; their marks must add up to the question marks)' : 'none (single question)'));
-      L.push('- Difficulty: ' + (o.difficulty || 'mixed'));
-      if (o.bloom) L.push('- Bloom\'s taxonomy level: ' + o.bloom);
-      L.push(o.qtype === 'Numerical' ? '- Question type: NUMERICAL problems with realistic figures/data in the statement; every part needs a calculation with a definite numeric answer. Include units/currency.' :
-        o.qtype === 'Mixed' ? '- Question type: a MIX of numerical problems (realistic data, calculations) and conceptual/theory questions.' :
-        '- Question type: conceptual/theory (define, explain, discuss, compare, apply).');
-    } else {
-      L.push('- Marks per question (if the teacher did not give marks): about ' + o.marks);
-    }
-    if (o.topic) L.push('- Topic(s): ' + o.topic);
-    if (o.notes) L.push('- Additional instructions: ' + o.notes);
-    if (o.cloLabels.length) L.push('- Only use these CLOs: ' + o.cloLabels.join(', '));
-    L.push('- Use the exact CLO labels above (e.g. "CLO 1").');
-    L.push('- Do NOT put answers or marking schemes inside the question text.');
-    if (o.source) L.push('\nBase the questions on this course material (between <<< and >>>):\n<<<\n' + o.source + '\n>>>');
-    if (o.web) {
-      L.push('\nReply ONLY with the questions in exactly this plain-text format (no tables, no bold, no headings, no extra commentary):');
-      L.push('Q1. Short heading (TOTAL marks) CLO 1');
-      L.push('Optional scenario, data or statement on its own lines');
-      L.push('(a) First part question (MARKS marks)');
-      L.push('(b) Second part question (MARKS marks)');
-      if (o.withAnswers) L.push('Answer: short answer key / worked solution with final results');
-      L.push('Q2. Next heading (TOTAL marks) CLO 2');
-      L.push('...');
-    } else {
-      L.push(o.withAnswers ? '- In "answer", give a concise answer key / worked solution (teacher only).' : '- Leave "answer" empty.');
-      L.push('\nReply with ONLY valid JSON (no commentary, no markdown) in exactly this shape:');
-      L.push('{"questions":[{"title":"Short heading","stem":"Optional scenario or statement, or empty","clos":["CLO 1"],"topic":"topic","difficulty":"Easy|Medium|Hard","qtype":"Theory|Numerical","marks":' + o.marks + ',"parts":[{"text":"Part question text","marks":1}],"answer":""}]}');
-    }
-    return L.join('\n');
-  }
-
-  function extractJson(text) {
-    var t = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-    try { return JSON.parse(t); } catch (e) { /* fall through */ }
-    var s = t.search(/[\[{]/);
-    if (s < 0) throw new Error('No JSON found in the AI reply.');
-    var open = t[s], close = open === '{' ? '}' : ']', depth = 0, inStr = false, escp = false;
-    for (var i = s; i < t.length; i++) {
-      var ch = t[i];
-      if (inStr) { if (escp) escp = false; else if (ch === '\\') escp = true; else if (ch === '"') inStr = false; continue; }
-      if (ch === '"') inStr = true;
-      else if (ch === '{' || ch === '[') depth++;
-      else if (ch === '}' || ch === ']') { depth--; if (depth === 0) return JSON.parse(t.slice(s, i + 1)); }
-    }
-    throw new Error('The AI reply contains incomplete JSON.');
-  }
-
-  function normLabel(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^CLO0*/, 'CLO'); }
-
-  // Returns sanitised question objects (not yet saved) for the given course.
-  function parseQuestions(text, course) {
-    if (String(text).length > 2000000) throw new Error('Reply is too large.');
-    var j = extractJson(text);
-    var list = Array.isArray(j) ? j : (j && Array.isArray(j.questions) ? j.questions : null);
-    if (!list) throw new Error('JSON does not contain a "questions" list.');
-    var byLabel = {};
-    (course.clos || []).forEach(function (c) { byLabel[normLabel(c.label)] = c.id; });
-    return list.slice(0, 100).map(function (q) {
-      q = q && typeof q === 'object' ? q : {};
-      var clos = (Array.isArray(q.clos) ? q.clos : (typeof q.clo === 'string' ? [q.clo] : [])).map(function (l) { return byLabel[normLabel(l)]; }).filter(Boolean);
-      var parts = Array.isArray(q.parts) ? q.parts.map(function (p) {
-        return typeof p === 'string' ? { text: p, marks: 0 } : { text: (p && (p.text || p.question)) || '', marks: p && p.marks };
-      }).filter(function (p) { return String(p.text).trim(); }) : [];
-      return window.QBStore.cleanQuestion({
-        courseId: course.id, title: q.title || q.heading || '', stem: q.stem || (parts.length ? '' : (q.text || q.question || '')),
-        parts: parts.map(function (p) { return { text: String(p.text).replace(/\s*\(\s*\d+(\.\d+)?\s*marks?\s*\)\s*$/i, ''), marks: p.marks }; }),
-        marks: q.marks, clos: Array.from(new Set(clos)), topic: q.topic || '',
-        difficulty: ['Easy', 'Medium', 'Hard'].indexOf(q.difficulty) >= 0 ? q.difficulty : '',
-        qtype: q.qtype === 'Numerical' || q.qtype === 'Theory' ? q.qtype : '', answer: typeof q.answer === 'string' ? q.answer : (q.answer ? JSON.stringify(q.answer) : '')
-      });
-    }).filter(function (q) { return q.title || q.stem || q.parts.length; });
-  }
-
-  async function call(path, key, body) {
-    var res = await fetch(API + path, {
-      method: body ? 'POST' : 'GET', mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store',
-      headers: Object.assign({ 'x-goog-api-key': key }, body ? { 'Content-Type': 'application/json' } : {}),
-      body: body ? JSON.stringify(body) : undefined
-    });
-    var j = null; try { j = await res.json(); } catch (e) { /* ignore */ }
-    if (!res.ok) {
-      var msg = (j && j.error && j.error.message) || ('HTTP ' + res.status);
-      var err = new Error(msg); err.status = res.status; throw err;
-    }
-    return j;
-  }
-
-  async function listModels(key) {
-    var j = await call('models?pageSize=200', key);
-    return (j.models || []).filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0; })
-      .map(function (m) { return String(m.name || '').replace(/^models\//, ''); })
-      .filter(function (n) { return /^gemini/i.test(n) && !/(embedding|tts|image|audio|live|aqa|vision)/i.test(n); });
-  }
-
-  async function generate(key, model, prompt) {
-    if (!/^[A-Za-z0-9._-]+$/.test(model)) throw new Error('Invalid model name');
-    var j = await call('models/' + encodeURIComponent(model) + ':generateContent', key, {
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.7, responseMimeType: 'application/json' }
-    });
-    var cand = j && j.candidates && j.candidates[0];
-    var text = cand && cand.content && (cand.content.parts || []).map(function (p) { return p.text || ''; }).join('');
-    if (!text) throw new Error('Gemini returned no text' + (cand && cand.finishReason ? ' (' + cand.finishReason + ')' : '') + '.');
-    return text;
-  }
-
-  // Tries the chosen model; if it no longer exists, picks the best available Flash/Pro model.
-  async function generateWithFallback(key, model, prompt, onModelChange) {
-    try { return await generate(key, model, prompt); }
-    catch (e) {
-      if (e.status !== 404 && e.status !== 400) throw e;
-      if (e.status === 400 && !/model/i.test(e.message)) throw e;
-      var models = await listModels(key);
-      var pick = models.filter(function (m) { return /flash/i.test(m) && !/lite|preview|exp/i.test(m); }).sort().reverse()[0] || models[0];
-      if (!pick || pick === model) throw e;
-      if (onModelChange) onModelChange(pick);
-      return generate(key, pick, prompt);
-    }
-  }
-
-  window.QBAI = { buildPrompt: buildPrompt, parseQuestions: parseQuestions, listModels: listModels, generate: generateWithFallback,
-    GEMINI_WEB: 'https://gemini.google.com/app', COPILOT_WEB: 'https://copilot.microsoft.com/', KEY_PAGE: 'https://aistudio.google.com/apikey' };
-})();
-
-;
 /* Reads questions pasted as plain text (from Word, PDF, WhatsApp, etc.) and turns them into
  * structured questions: heading, statement, parts (a)(b)..., marks and CLOs. No AI, runs locally. */
 (function () {
@@ -688,7 +531,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
 
     function newQ(headText) {
       var e = extract(headText || '');
-      cur = { head: e.text, headMarks: e.marks, clos: e.clos.slice(), stem: [], parts: [], answer: [] };
+      cur = { head: e.text.replace(/\s*\|\s*/g, ' ').trim(), headMarks: e.marks, clos: e.clos.slice(), stem: [], parts: [], answer: [] };
       out.push(cur); part = null; mode = 'stem';
     }
 
@@ -702,8 +545,12 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       return { questions: out, ignored: 0 };
     }
 
+    var stopped = false;
     lines.forEach(function (raw) {
+      if (stopped) return;
       var line = raw.replace(/\t+/g, ' ').trimEnd();
+      if (/^\s*(?:CLO[- ]wise\s+marks|marks\s+distribution|answer\s+key|marking\s+scheme|solutions?)\s*:?\s*$/i.test(line) || /^\s*CLO\s*\|\s*Description\b/i.test(line)) { stopped = true; return; }
+      if (/^\s*page\s+\d+(\s*(of|\/)\s*\d+)?\s*$/i.test(line) || /^\s*-\s*\d+\s*-\s*$/.test(line)) return;
       if (!line.trim()) { if (part) part.text.push(''); else if (cur && mode === 'stem') cur.stem.push(''); return; }
       var m;
       if ((qStyle ? RE_QSTYLE.test(line) : true) && (m = RE_Q.exec(line))) { newQ(m[3]); return; }
@@ -712,7 +559,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       if (RE_SKIP.test(line) && line.trim().length < 60) return;
       if ((m = RE_PART.exec(line)) || (qStyle && (m = RE_NUMPART.exec(line)))) {
         var e = extract(m[3] || '');
-        part = { text: [e.text], marks: e.marks }; cur.parts.push(part); mode = 'part';
+        part = { text: [e.text.replace(/\s*\|\s*/g, ' ').trim()], marks: e.marks }; cur.parts.push(part); mode = 'part';
         e.clos.forEach(function (c) { cur.clos.push(c); });
         return;
       }
@@ -1051,7 +898,9 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   var aiCandidates = [];
 
   // ---------- DOM helpers ----------
-  function $(id) { return document.getElementById(id); }
+  // AI Generate was removed from the page; its old code stays inert (ids below no longer exist).
+  var REMOVED = /^(?:ai[A-Z]\w*|getKey|saveKey|clearKey|testKey|keyMsg|modelList)$/;
+  function $(id) { var el = document.getElementById(id); return el || (REMOVED.test(id) ? document.createElement('div') : el); }
   function h(tag, attrs) {
     var el = document.createElement(tag);
     if (attrs) Object.keys(attrs).forEach(function (k) {
@@ -1484,6 +1333,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     if (!course(p.courseId) && data.courses.length) p.courseId = data.courses[0].id;
     fillCourseSelect($('pCourse'), p.courseId);
     var c = course(p.courseId) || { code: '', title: '' };
+    $('pDept').value = p.department || (data.settings.deptPrefix + data.settings.department); $('pUni').value = p.university || data.settings.university;
     $('pCode').value = p.courseCode || c.code; $('pTitle').value = p.courseTitle || c.title;
     $('pExam').value = p.exam; $('pSeason').value = p.season; $('pClass').value = p.classSection; $('pInstructor').value = p.instructor;
     var ys = clear($('pYear')), now = new Date().getFullYear();
@@ -1545,7 +1395,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var p = data.paper, c = course(p.courseId) || { code: '', title: '', clos: [] }, qs = qsOverride || paperQuestions();
     var sum = round(qs.reduce(function (a, q) { return a + total(q); }, 0));
     return {
-      university: data.settings.university, deptPrefix: data.settings.deptPrefix, department: data.settings.department,
+      university: p.university || data.settings.university, deptPrefix: p.department ? '' : data.settings.deptPrefix, department: p.department || data.settings.department,
       examTitle: [p.exam, p.season + ' ' + p.year].filter(function (x) { return x && x.trim(); }).join(' \u2013 ') + (setLabel ? ' (' + setLabel + ')' : ''),
       courseTitle: p.courseTitle || c.title, courseCode: p.courseCode || c.code, examTime: fmtTime(p.examTime), classSection: p.classSection, instructor: p.instructor, timeAllowed: p.timeAllowed,
       date: p.date, maxMarks: p.maxMarksOverride === '' || qsOverride ? sum : p.maxMarksOverride, instructions: p.instructions,
@@ -1752,7 +1602,24 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
 
   // ---------- PASTE QUESTIONS ----------
   var psCandidates = [];
+  var uploadToPaper = false;
+  async function uploadPaperFile(file) {
+    if (!file) return;
+    if (!data.courses.length) { toast('Add a course first.', 'err'); return showTab('courses'); }
+    var text;
+    try { toast('Reading ' + file.name + '\u2026'); text = await window.QBOutline.readFile(file); }
+    catch (e) { return toast(e.message, 'err'); }
+    openPaste();
+    $('psTitle').textContent = 'Questions from: ' + file.name;
+    // pick the course: paper builder's course, or one whose code appears in the file
+    var cid = uploadToPaper && data.paper.courseId ? data.paper.courseId : '';
+    if (!cid) { var hit = data.courses.find(function (c) { return c.code && text.toUpperCase().indexOf(c.code.toUpperCase()) >= 0; }); if (hit) cid = hit.id; }
+    if (cid) $('psCourse').value = cid;
+    $('psToPaper').checked = uploadToPaper;
+    $('psText').value = text; readPaste();
+  }
   function openPaste() {
+    $('psTitle').textContent = 'Paste questions';
     if (!data.courses.length) { toast('Add a course first.', 'err'); return showTab('courses'); }
     fillCourseSelect($('psCourse'), filt.course || data.paper.courseId || data.courses[0].id);
     psCandidates = []; renderPaste(); $('psMsg').textContent = '';
@@ -2130,7 +1997,10 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('fDiff').addEventListener('change', function (e) { filt.diff = e.target.value; renderBank(); });
     $('fSearch').addEventListener('input', function (e) { filt.q = e.target.value; renderBank(); });
     $('addQ').addEventListener('click', function () { openQuestion(null); });
-    $('pasteQ').addEventListener('click', openPaste);
+    $('pasteQ').addEventListener('click', function () { $('psToPaper').checked = false; openPaste(); });
+    $('uploadPaperBank').addEventListener('click', function () { uploadToPaper = false; $('paperFile').value = ''; $('paperFile').click(); });
+    $('uploadPaper').addEventListener('click', function () { uploadToPaper = true; $('paperFile').value = ''; $('paperFile').click(); });
+    $('paperFile').addEventListener('change', function (e) { uploadPaperFile(e.target.files[0]); });
     $('fTopic').addEventListener('change', function (e) { filt.topic = e.target.value; renderBank(); });
     $('oFile').addEventListener('change', function (e) { outlineFromFile(e.target.files[0]); });
     $('oRead').addEventListener('click', readOutline);
@@ -2184,7 +2054,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       if (p().questionIds.length && !confirm('Changing the course clears the questions on this paper. Continue?')) { e.target.value = p().courseId; return; }
       p().courseId = e.target.value; p().questionIds = []; p().courseCode = ''; p().courseTitle = ''; changed(); renderPaper();
     });
-    [['pExam', 'exam'], ['pSeason', 'season'], ['pClass', 'classSection'], ['pInstructor', 'instructor'], ['pTimeCustom', 'timeAllowed'], ['pStart', 'examTime'], ['pDate', 'date'], ['pInstr', 'instructions'], ['pCode', 'courseCode'], ['pTitle', 'courseTitle']].forEach(function (m) {
+    [['pExam', 'exam'], ['pSeason', 'season'], ['pClass', 'classSection'], ['pInstructor', 'instructor'], ['pTimeCustom', 'timeAllowed'], ['pStart', 'examTime'], ['pDate', 'date'], ['pInstr', 'instructions'], ['pCode', 'courseCode'], ['pTitle', 'courseTitle'], ['pDept', 'department'], ['pUni', 'university']].forEach(function (m) {
       $(m[0]).addEventListener('input', function (e) { p()[m[1]] = e.target.value; changed(); renderPaperLists(); });
     });
     $('pYear').addEventListener('change', function (e) { p().year = Number(e.target.value); changed(); renderPaperLists(); });
@@ -2221,7 +2091,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     });
     window.addEventListener('focus', function () { var b = $('aiBack'); if (!b.classList.contains('hidden') && current() === 'ai') { b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); } });
     ['aiMine', 'aiMode', 'aiCount', 'aiMarks', 'aiParts', 'aiDiff', 'aiBloom', 'aiType', 'aiTopic', 'aiNotes', 'aiSource', 'aiAnswers'].forEach(function (id) { $(id).addEventListener('change', updPromptView); });
-    document.querySelector('.web-ai details').addEventListener('toggle', updPromptView);
+    if (document.querySelector('.web-ai details')) document.querySelector('.web-ai details').addEventListener('toggle', updPromptView);
 
     // backup & security
     document.querySelectorAll('input[name=bmode]').forEach(function (r) { r.addEventListener('change', function () { data.settings.backupMode = r.value; changed(); setStatus(); }); });
