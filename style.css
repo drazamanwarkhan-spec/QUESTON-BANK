@@ -276,3 +276,10 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .date-mode { margin-bottom: 6px; }
 .dd00 { align-self: center; font-weight: 600; color: var(--muted); }
 #pDateMonthWrap select { width: auto; flex: 1; }
+
+.preview { position: relative; }
+.pv-break { position: absolute; left: 0; right: 0; height: 0; border-top: 2px dashed #c9c4bb; pointer-events: none; z-index: 2; }
+.pv-break span { position: absolute; right: 10px; top: -11px; background: #f6f4f0; color: #6b7079; font: 600 11px "Segoe UI", system-ui, sans-serif; padding: 2px 8px; border-radius: 99px; border: 1px solid #e3e1dc; white-space: nowrap; }
+.pv-foot { font-weight: 600; }
+.pages-pill { font-size: 12px; font-weight: 700; color: var(--brand); background: var(--brand-soft); border-radius: 99px; padding: 3px 10px; }
+.pages-pill:empty { display: none; }

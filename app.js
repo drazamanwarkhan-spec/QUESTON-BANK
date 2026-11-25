@@ -1750,6 +1750,30 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('pDateExact').classList.toggle('hidden', md !== 'exact');
     $('pDateMonthWrap').classList.toggle('hidden', md !== 'month');
   }
+  // ---------- page numbers on the on-screen paper ----------
+  // The Word page (Letter, the template's margins, letterhead in the page header) holds about 9.3 inches of
+  // text per 7.5 inches of width. The same ratio is applied to the paper on screen; breaks are drawn on top
+  // of the text (they do not move it) with "Page X of Y", like Word's page view.
+  var PAGE_RATIO = 9.3 / 7.5, pagTimer = null;
+  function paginate() {
+    var box = $('preview'); if (!box || !box.offsetParent) return;
+    box.querySelectorAll('.pv-break').forEach(function (x) { x.remove(); });
+    var head = box.querySelector('.pv-head'), foot = $('pvFoot');
+    var cs = getComputedStyle(box), inner = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var pageH = inner * PAGE_RATIO;
+    var start = head ? head.offsetTop + head.offsetHeight + 8 : 0;
+    var end = foot ? foot.offsetTop - 10 : box.scrollHeight;
+    var pages = Math.max(1, Math.ceil((end - start) / pageH - 0.003));
+    for (var k = 1; k < pages; k++) {
+      var y = start + k * pageH;
+      var br = h('div', { class: 'pv-break', 'aria-hidden': 'true' }, h('span', { text: 'Page ' + k + ' of ' + pages + '  \u2022  page ' + (k + 1) + ' starts here' }));
+      br.style.top = Math.round(y) + 'px';
+      box.appendChild(br);
+    }
+    if (foot) foot.textContent = 'Page ' + pages + ' of ' + pages;
+    var pn = $('pvPages'); if (pn) pn.textContent = pages + ' page' + (pages === 1 ? '' : 's');
+  }
+  function paginateSoon() { clearTimeout(pagTimer); pagTimer = setTimeout(paginate, 250); }
   function finishModel(m) { if (data.paper.edit) m.body = flatten(assemble(m)); return m; }
   function renderPreview(qs, max) {
     var m = paperModel(), box = clear($('preview'));
@@ -1766,14 +1790,15 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       h('hr', { class: 'pv-dots' }));
     box.append(edRoot());
     renderEditor(m);
-    box.append(h('p', { class: 'pv-foot', text: 'Page 1 of …' }));
+    box.append(h('p', { class: 'pv-foot', id: 'pvFoot', text: 'Page 1 of 1' }));
+    requestAnimationFrame(paginate);
   }
   // ---------- editable paper ----------
   var edEl = null, edKey = '', edTimer = null, edRange = null, ED_FONT = 'Times New Roman';
   function edRoot() {
     if (!edEl) {
       edEl = h('div', { id: 'paperEdit', class: 'pv-edit', contenteditable: 'true', spellcheck: 'true', 'aria-label': 'Paper questions (editable)' });
-      edEl.addEventListener('input', function () { clearTimeout(edTimer); edTimer = setTimeout(saveEdit, 400); $('edState').textContent = 'Editing\u2026'; });
+      edEl.addEventListener('input', function () { clearTimeout(edTimer); edTimer = setTimeout(saveEdit, 400); $('edState').textContent = 'Editing\u2026'; paginateSoon(); });
       edEl.addEventListener('paste', function (e) { // paste as plain text (keeps the paper clean and safe)
         e.preventDefault(); var t = (e.clipboardData || window.clipboardData).getData('text/plain'); document.execCommand('insertText', false, t);
       });
@@ -1814,7 +1839,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var key = hashStr(JSON.stringify(body)) + '|' + segs.map(function (s) { return s.id; }).join(',');
     if (key === edKey && edEl.childNodes.length) return;        // nothing changed: keep the caret where it is
     edKey = key;
-    modelToDom(segs, edEl);
+    modelToDom(segs, edEl); paginateSoon();
     $('edState').textContent = edited ? 'Edited ✓ (saved)' : '';
   }
   function runStyle(el, r) {
@@ -2810,6 +2835,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAEUAel1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('lockNow').addEventListener('click', lockNow);
     document.addEventListener('keydown', function (e) { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveAll(); } });
     ['click', 'keydown'].forEach(function (ev) { document.addEventListener(ev, armAutoLock, { passive: true }); });
+    window.addEventListener('resize', paginateSoon);
     window.addEventListener('beforeunload', function (e) { if (data && dirtyPC && data.settings.backupMode !== 'browser') { saveLocal(); e.preventDefault(); e.returnValue = ''; } });
 
     // bank
