@@ -1840,7 +1840,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
       } }));
     });
     topicInfo($('aiTopicInfo'), c, $('aiTopic').value);
-    $('aiKeyState').textContent = data.settings.ai.geminiKey ? 'Using your Gemini key · model ' + data.settings.ai.model : 'No Gemini key saved — use Open Gemini / Open Copilot above, or add a key in Backup & Security.';
+    $('aiKeyState').textContent = data.settings.ai.geminiKey ? '✓ Gemini connected (' + data.settings.ai.model + '). Tip: Ctrl+Enter in the command box sends it.' : 'First time? Clicking the button shows a 1-minute setup to connect Gemini with your Google account.';
     renderAIResults();
   }
   function aiPrompt(web) {
@@ -1859,18 +1859,36 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
   function updPromptView() { try { $('aiPromptView').value = aiPrompt(true); } catch (e) { $('aiPromptView').value = e.message; } }
   async function aiGemini() {
     var key = data.settings.ai.geminiKey;
-    if (!key) { toast('Add your Gemini API key first (Backup & Security tab), or use “No API key?” below.', 'err'); return showTab('backup'); }
-    var prompt; try { prompt = aiPrompt(); } catch (e) { return toast(e.message, 'err'); }
-    var btn = $('aiGemini'); btn.disabled = true; btn.textContent = 'Generating…'; $('aiMsg').textContent = '';
+    if (!key) { $('aiConnect').classList.remove('hidden'); $('aiKeyInline').focus(); $('aiConnect').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    var prompt; try { prompt = aiPrompt(false); } catch (e) { return toast(e.message, 'err'); }
+    var btn = $('aiGemini'); btn.disabled = true; btn.replaceChildren(h('span', { class: 'ai-working' }), 'Gemini is writing your questions…');
+    $('aiMsg').textContent = '';
     try {
-      var text = await AI.generate(key, data.settings.ai.model, prompt, function (m) { data.settings.ai.model = m; changed(); toast('Switched to model ' + m); });
+      var text = await AI.generate(key, data.settings.ai.model, prompt, function (m) { data.settings.ai.model = m; changed(); });
       $('aiPaste').value = text; parseAI();
+      if (aiCandidates.length && !$('aiReview').checked) aiAdd(true, true);
+      else if (aiCandidates.length) $('aiResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) {
       var msg = String(e.message || e);
-      if (/API key not valid|API_KEY_INVALID|permission|403/i.test(msg)) msg += ' — check the key in Backup & Security.';
-      if (/Failed to fetch|NetworkError/i.test(msg)) msg = 'Could not reach Google. Check your internet connection.';
-      $('aiMsg').textContent = 'Gemini error: ' + msg; $('aiMsg').className = 'small err';
-    } finally { btn.disabled = false; btn.textContent = 'Generate with Gemini'; }
+      if (/API key not valid|API_KEY_INVALID|permission|403|401/i.test(msg)) { msg = 'Google did not accept the key. Connect again with a new key.'; $('aiConnect').classList.remove('hidden'); }
+      else if (/quota|429|RESOURCE_EXHAUSTED/i.test(msg)) msg = 'Gemini’s free limit was reached for now. Wait a minute and try again.';
+      else if (/Failed to fetch|NetworkError/i.test(msg)) msg = 'Could not reach Google. Check your internet connection.';
+      $('aiMsg').className = 'small err'; $('aiMsg').textContent = 'Gemini: ' + msg; toast('Gemini: ' + msg, 'err');
+    } finally { btn.disabled = false; btn.textContent = '✨ Send to Gemini & add to paper'; }
+  }
+  async function aiConnect() {
+    var k = $('aiKeyInline').value.trim(), m = $('aiConnectMsg');
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(k)) { m.className = 'small err'; m.textContent = 'That doesn’t look like a Gemini key. Copy the whole key from Google AI Studio.'; return; }
+    m.className = 'small'; m.textContent = 'Checking the key with Google…';
+    try {
+      var models = await AI.listModels(k);
+      if (models.length && models.indexOf(data.settings.ai.model) < 0) {
+        data.settings.ai.model = models.filter(function (x) { return /flash/i.test(x) && !/lite|preview|exp/i.test(x); }).sort().reverse()[0] || models[0];
+      }
+      data.settings.ai.geminiKey = k; $('aiKeyInline').value = ''; changed(); await saveLocal();
+      m.className = 'small ok'; m.textContent = '✓ Connected.'; $('aiConnect').classList.add('hidden'); renderAI();
+      aiGemini();
+    } catch (e) { m.className = 'small err'; m.textContent = 'Google did not accept this key: ' + e.message; }
   }
   var lastPrompt = '';
   async function copyPrompt() {
@@ -1955,11 +1973,11 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     var none = !aiCandidates.some(function (x) { return x.on; });
     $('aiAddSel').disabled = none; $('aiAddPaper').disabled = none;
   }
-  function aiAdd(toPaper) {
+  function aiAdd(toPaper, auto) {
     var picked = aiCandidates.filter(function (x) { return x.on; }).map(function (x) { return x.q; });
     if (!picked.length) return;
     var noClo = picked.filter(function (q) { return !q.clos.length; }).length;
-    if (noClo && !confirm(noClo + ' question(s) have no CLO. Add anyway?')) return;
+    if (noClo && !auto && !confirm(noClo + ' question(s) have no CLO. Add anyway?')) return;
     if (toPaper && data.paper.courseId && data.paper.courseId !== aiSel.course && data.paper.questionIds.length &&
       !confirm('The current paper is for another course. Start a new paper for this course? (The old paper’s questions stay in the bank.)')) return;
     var now = new Date().toISOString();
@@ -1971,7 +1989,7 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     }
     aiCandidates = []; $('aiPaste').value = ''; $('aiMsg').textContent = '';
     changed(); renderAIResults();
-    if (toPaper) { showTab('paper'); toast(picked.length + ' question(s) added to the paper (and saved in the bank). Press Save to back up.'); }
+    if (toPaper) { showTab('paper'); toast(picked.length + ' question(s) from ' + (auto ? 'Gemini' : 'the AI') + ' added to the paper' + (noClo ? ' (' + noClo + ' without a CLO — click ✎ to set it)' : '') + '. Press Save to back up.'); }
     else toast(picked.length + ' question(s) added to the bank. Press Save to back up.');
   }
 
@@ -2192,6 +2210,10 @@ window.QB_TEMPLATE_DOCX_B64 = 'UEsDBBQAAAAIAK+keV1QOKEQqgEAAHQIAAATAAAAW0NvbnRlb
     $('aiAddSel').addEventListener('click', function () { aiAdd(false); });
     $('aiAddPaper').addEventListener('click', function () { aiAdd(true); });
     $('aiClip').addEventListener('click', pasteClipboard);
+    $('aiGetKey').addEventListener('click', function () { window.open(AI.KEY_PAGE, '_blank', 'noopener,noreferrer'); });
+    $('aiConnectBtn').addEventListener('click', aiConnect);
+    $('aiKeyInline').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); aiConnect(); } });
+    $('aiMine').addEventListener('keydown', function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); aiGemini(); } });
     $('aiClip2').addEventListener('click', pasteClipboard);
     $('aiBulkApply').addEventListener('click', function () {
       var m = Number($('aiBulkMarks').value); if (!(m > 0)) return toast('Type the marks first.', 'err');

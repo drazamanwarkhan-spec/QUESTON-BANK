@@ -78,6 +78,14 @@
       <div class="card">
         <h2>Generate questions with AI</h2>
         <div class="field"><label for="aiCourse">Course</label><select id="aiCourse"></select></div>
+        <div class="field mine"><label for="aiMine">Your command for Gemini — or paste your own questions</label>
+          <select id="aiMode">
+            <option value="new">Use as instructions / notes and write new questions</option>
+            <option value="similar">Write new questions similar to mine</option>
+            <option value="improve">Improve and rewrite my questions</option>
+            <option value="format">Keep my questions as they are, just add parts, marks &amp; CLOs</option>
+          </select>
+          <textarea id="aiMine" rows="5" maxlength="60000" placeholder="e.g. &#8220;Make 3 numerical questions on NPV and IRR, 5 marks each, Pakistani context&#8221; &#8212; or paste your questions here"></textarea></div>
         <div class="field"><label>CLOs to assess</label><div id="aiClos" class="chips"></div></div>
         <div class="row3">
           <div class="field"><label for="aiType">Question type</label>
@@ -97,18 +105,28 @@
         <div class="field"><label for="aiNotes">Extra instructions (optional)</label><input id="aiNotes" type="text" maxlength="500" placeholder="e.g. use Pakistani context and PKR figures"></div>
         <div class="field"><label for="aiSource">Course material to base questions on (optional)</label>
           <textarea id="aiSource" rows="4" maxlength="60000" placeholder="Paste lecture notes or a chapter summary…"></textarea></div>
-        <div class="field mine"><label for="aiMine">Your own questions or instructions for the AI (optional)</label>
-          <select id="aiMode">
-            <option value="new">Use as instructions / notes and write new questions</option>
-            <option value="similar">Write new questions similar to mine</option>
-            <option value="improve">Improve and rewrite my questions</option>
-            <option value="format">Keep my questions as they are, just add parts, marks &amp; CLOs</option>
-          </select>
-          <textarea id="aiMine" rows="5" maxlength="60000" placeholder="Paste your questions here, or type what you want, e.g. &#8220;Make 2 case-study questions on inflation in Pakistan with calculations&#8221;"></textarea></div>
         <label class="check"><input id="aiAnswers" type="checkbox" checked> Also create an answer key (kept in the bank, never printed on the paper)</label>
 
+        <div class="send-box">
+          <button id="aiGemini" class="btn primary big">✨ Send to Gemini &amp; add to paper</button>
+          <label class="check small"><input id="aiReview" type="checkbox"> Let me check marks &amp; CLOs before they go on the paper</label>
+          <span class="muted small" id="aiKeyState"></span>
+          <div id="aiConnect" class="connect hidden">
+            <h3>Connect Gemini to this app (one time, about 1 minute)</h3>
+            <ol class="small">
+              <li>Click <b>Get my free key</b>. Google AI Studio opens with the Google account already signed in to this browser.</li>
+              <li>Click <b>Create API key</b> and copy the key.</li>
+              <li>Paste it below and click <b>Connect &amp; send</b>. From then on, one click sends your command to Gemini and the questions go straight onto the paper.</li>
+            </ol>
+            <div class="ai-actions"><button id="aiGetKey" class="btn">Get my free key</button></div>
+            <div class="row2"><input id="aiKeyInline" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your Gemini key here">
+              <button id="aiConnectBtn" class="btn primary">Connect &amp; send</button></div>
+            <p id="aiConnectMsg" class="small"></p>
+            <p class="small muted">The key stays only on this computer (encrypted if you set a password) and is only ever sent to Google.</p>
+          </div>
+        </div>
         <div class="web-ai">
-          <h3>Use Gemini or Copilot in your browser (no key needed)</h3>
+          <h3>Or use the Gemini / Copilot website (copy &amp; paste)</h3>
           <ol class="small">
             <li>Click <b>Open Gemini</b> or <b>Open Copilot</b>. Everything above, including your own questions, is copied as the prompt.</li>
             <li>In Gemini / Copilot press <b>Ctrl+V</b>. Add any command of your own if you like, then send.</li>
@@ -120,11 +138,6 @@
             <button id="aiCopy" class="btn ghost">Copy prompt only</button>
           </div>
           <details><summary class="small">See the prompt that will be sent</summary><textarea id="aiPromptView" rows="8" readonly></textarea></details>
-        </div>
-        <hr>
-        <div class="ai-actions">
-          <button id="aiGemini" class="btn">Generate here with my Gemini key</button>
-          <span class="muted small" id="aiKeyState"></span>
         </div>
       </div>
 
